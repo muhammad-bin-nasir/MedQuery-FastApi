@@ -705,10 +705,26 @@
         });
       };
 
-      const deleteChatById = (chatId) => {
+      const deleteChatById = async (chatId) => {
         const chatToDelete = chats.find((entry) => entry.id === chatId);
         if (!chatToDelete) {
           setStatus(chatStatusEl, "Chat not found.", "error");
+          return;
+        }
+
+        try {
+          const response = await fetch(`/api/chat/headers/${encodeURIComponent(chatId)}`, {
+            method: "DELETE",
+            headers: buildHeaders(),
+          });
+          if (!response.ok) {
+            const responseBody = await response.json().catch(() => ({}));
+            const detail = responseBody?.detail || "Failed to delete chat from server.";
+            throw new Error(detail);
+          }
+        } catch (error) {
+          setStatus(chatStatusEl, error.message || "Could not delete chat.", "error");
+          logEvent("error", "chat", "chat_delete_failed", error.message || "Request failed");
           return;
         }
 
@@ -931,12 +947,12 @@
         event.stopPropagation();
       });
 
-      deleteChatActionEl.addEventListener("click", () => {
+      deleteChatActionEl.addEventListener("click", async () => {
         if (!contextMenuChatId) {
           hideChatContextMenu();
           return;
         }
-        deleteChatById(contextMenuChatId);
+        await deleteChatById(contextMenuChatId);
         hideChatContextMenu();
       });
 

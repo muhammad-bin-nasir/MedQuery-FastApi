@@ -19,6 +19,36 @@ from app.services.chat_service import ChatService
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+@router.delete("/headers/{chat_id}")
+async def delete_chat_header(
+    chat_id: str,
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> dict:
+    owner_user_id = admin.email
+    stmt = select(ChatHeader).where(
+        ChatHeader.owner_user_id == owner_user_id,
+        ChatHeader.chat_id == chat_id,
+    )
+    header = (await session.execute(stmt)).scalar_one_or_none()
+    if not header:
+        raise HTTPException(status_code=404, detail="Chat header not found")
+
+    await session.delete(header)
+    await session.commit()
+
+    log_chat(
+        "CHAT_HEADER_DELETED",
+        "Chat header deleted",
+        chat_id=chat_id,
+        owner_user_id=owner_user_id,
+        requester_admin_id=str(admin.id),
+        requester_role=admin.role,
+    )
+
+    return {"status": "deleted", "chat_id": chat_id}
+
+
 @router.get("/history/{user_id}", response_model=ChatHistoryResponse)
 async def get_user_chat_history(
     user_id: str,
