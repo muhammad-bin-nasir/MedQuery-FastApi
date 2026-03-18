@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MedQuery Admin Login</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-2: #1f2937;
+        --panel-3: #0b1220;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-2: #0ea5e9;
+        --success: #22c55e;
+        --border: #334155;
+        --error: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        padding: 24px 32px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(135deg, #0f172a 0%, #111827 100%);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 600;
+      }
+
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .profile-menu {
+        position: relative;
+      }
+
+      .profile-button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 12px;
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(56, 189, 248, 0.3);
+        display: grid;
+        place-items: center;
+        font-weight: 600;
+        color: var(--accent);
+      }
+
+      .dropdown {
+        position: absolute;
+        right: 0;
+        top: 48px;
+        min-width: 220px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.45);
+        padding: 8px;
+        display: none;
+        z-index: 10;
+      }
+
+      .dropdown.open {
+        display: grid;
+        gap: 4px;
+      }
+
+      .dropdown a,
+      .dropdown button {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: none;
+        background: transparent;
+        color: var(--text);
+        text-decoration: none;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .dropdown a:hover,
+      .dropdown button:hover {
+        background: rgba(56, 189, 248, 0.12);
+      }
+
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(280px, 400px) minmax(280px, 1fr);
+        gap: 32px;
+        padding: 32px;
+        align-items: start;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.45);
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        padding: 12px;
+        background: var(--panel-2);
+        color: var(--text);
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+
+      input:focus {
+        outline: 2px solid rgba(56, 189, 248, 0.35);
+        border-color: rgba(56, 189, 248, 0.6);
+      }
+
+      button {
+        width: 100%;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        background: var(--accent);
+        color: #0f172a;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.15s ease, background 0.15s ease;
+      }
+
+      button:hover {
+        background: var(--accent-2);
+        transform: translateY(-1px);
+      }
+
+      button.secondary {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+
+      .status {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 12px;
+      }
+
+      .status.success {
+        color: var(--success);
+      }
+
+      .status.error {
+        color: var(--error);
+      }
+
+      .quick-links {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .link-card {
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--panel-2);
+      }
+
+      .link-card h3 {
+        margin: 0 0 6px;
+        font-size: 14px;
+      }
+
+      .link-card p {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .link-card a {
+        color: var(--accent);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      @media (max-width: 960px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Admin Login</h1>
+        <p>Authenticate as an admin before accessing the chat workspace.</p>
+      </div>
+      <div class="profile-menu">
+        <button class="profile-button" id="profile-toggle" type="button">
+          <span class="avatar" id="profile-avatar">A</span>
+          <span id="profile-name">Admin</span>
+        </button>
+        <div class="dropdown" id="profile-dropdown">
+          <a href="/profile">Profile</a>
+          <a href="/rag-builder">RAG builder</a>
+          <a href="/database-overview">Database overview</a>
+          <a href="/assignments">Assignments</a>
+          <a href="/system-config">System configurations</a>
+          <a href="/system-logs">System logs</a>
+          <button type="button" id="logout">Sign out</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Sign in</h2>
+        <p class="status" id="login-hint">
+          Use the seeded super admin (admin@example.com / password) or your assigned credentials.
+        </p>
+
+        <label for="email">Admin Email</label>
+        <input id="email" placeholder="admin@example.com" value="admin@example.com" />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="password" value="password" />
+
+        <button id="login-button">Login and Continue</button>
+        <button id="continue-button" class="secondary" type="button">Continue to Chat</button>
+        <div class="status" id="login-status">Awaiting login.</div>
+      </section>
+
+      <section class="panel">
+        <h2>Workspace Access</h2>
+        <div class="quick-links">
+          <div class="link-card">
+            <h3>Chat Workspace</h3>
+            <p>Start a new chat, browse your chat history, and manage prompts.</p>
+            <a href="/chat">Open chat interface →</a>
+          </div>
+          <div class="link-card">
+            <h3>Assignments</h3>
+            <p>Manage business assignments, admin roles, and workspace access.</p>
+            <a href="/assignments">Open assignments →</a>
+          </div>
+          <div class="link-card">
+            <h3>RAG Builder</h3>
+            <p>Upload documents and monitor RAG coverage per business and workspace.</p>
+            <a href="/rag-builder">Open RAG builder →</a>
+          </div>
+          <div class="link-card">
+            <h3>Database Overview</h3>
+            <p>Review tables and database metadata in a dedicated console.</p>
+            <a href="/database-overview">Open database overview →</a>
+          </div>
+          <div class="link-card">
+            <h3>System Logs</h3>
+            <p>Review recorded actions, warnings, and errors across the admin UI.</p>
+            <a href="/system-logs">Open system logs →</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const loginButton = document.getElementById("login-button");
+      const continueButton = document.getElementById("continue-button");
+      const statusEl = document.getElementById("login-status");
+      const profileName = document.getElementById("profile-name");
+      const profileAvatar = document.getElementById("profile-avatar");
+      const profileToggle = document.getElementById("profile-toggle");
+      const profileDropdown = document.getElementById("profile-dropdown");
+      const logoutButton = document.getElementById("logout");
+
+      const emailInput = document.getElementById("email");
+      const passwordInput = document.getElementById("password");
+
+      const logEvent = (level, tag, action, details = "") => {
+        const logStorageKey = "systemLogs";
+        const logs = JSON.parse(localStorage.getItem(logStorageKey) || "[]");
+        logs.unshift({
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          level,
+          tag,
+          action,
+          details,
+        });
+        localStorage.setItem(logStorageKey, JSON.stringify(logs.slice(0, 500)));
+      };
+
+      const setStatus = (message, type = "") => {
+        statusEl.textContent = message;
+        statusEl.classList.remove("success", "error");
+        if (type) {
+          statusEl.classList.add(type);
+        }
+      };
+
+      const setLoading = (isLoading) => {
+        loginButton.disabled = isLoading;
+        loginButton.textContent = isLoading ? "Signing in..." : "Login and Continue";
+      };
+
+      const saveAdminSession = (payload) => {
+        localStorage.setItem("adminToken", payload.access_token);
+        localStorage.setItem("adminBusinessId", payload.business_client_id || "");
+        localStorage.setItem("adminWorkspaceId", payload.workspace_id || "");
+        localStorage.setItem("adminRole", payload.role || "");
+        localStorage.setItem("adminEmail", emailInput.value.trim());
+        localStorage.setItem("adminLoginAt", new Date().toISOString());
+        profileName.textContent = emailInput.value.trim();
+        profileAvatar.textContent = emailInput.value.trim().charAt(0).toUpperCase();
+      };
+
+      const hasToken = () => Boolean(localStorage.getItem("adminToken"));
+
+      const refreshContinueButton = () => {
+        continueButton.disabled = !hasToken();
+      };
+
+      loginButton.addEventListener("click", async () => {
+        const email = emailInput.value.trim();
+        const password = passwordInput.value.trim();
+
+        if (!email || !password) {
+          setStatus("Please provide email and password.", "error");
+          logEvent("warning", "auth", "login_validation_failed", "Missing credentials.");
+          return;
+        }
+
+        setLoading(true);
+        setStatus("Signing in...");
+        logEvent("info", "auth", "login_attempt", `email=${email}`);
+
+        try {
+          const response = await fetch("/api/admin/auth/login", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              email,
+              password,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({}));
+            throw new Error(errorBody.detail || "Login failed.");
+          }
+
+          const payload = await response.json();
+          saveAdminSession(payload);
+          setStatus("Login successful. Redirecting to chat...", "success");
+          logEvent("info", "auth", "login_success", `business=${payload.business_client_id || ""}`);
+          window.location.assign("/chat");
+        } catch (error) {
+          setStatus(`Login failed: ${error.message}`, "error");
+          logEvent("error", "auth", "login_failed", error.message);
+        } finally {
+          setLoading(false);
+          refreshContinueButton();
+        }
+      });
+
+      continueButton.addEventListener("click", () => {
+        if (hasToken()) {
+          logEvent("info", "auth", "continue_to_chat");
+          window.location.assign("/chat");
+        }
+      });
+
+      refreshContinueButton();
+      if (hasToken()) {
+        setStatus("Existing admin session found.", "success");
+        logEvent("info", "auth", "session_detected");
+      }
+
+      const email = localStorage.getItem("adminEmail") || "Admin";
+      profileName.textContent = email;
+      profileAvatar.textContent = email.charAt(0).toUpperCase();
+
+      profileToggle.addEventListener("click", () => {
+        profileDropdown.classList.toggle("open");
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!profileToggle.contains(event.target) && !profileDropdown.contains(event.target)) {
+          profileDropdown.classList.remove("open");
+        }
+      });
+
+      logoutButton.addEventListener("click", () => {
+        localStorage.removeItem("adminToken");
+        localStorage.removeItem("adminBusinessId");
+        localStorage.removeItem("adminWorkspaceId");
+        localStorage.removeItem("adminRole");
+        localStorage.removeItem("adminEmail");
+        localStorage.removeItem("adminLoginAt");
+        logEvent("info", "auth", "logout");
+        window.location.assign("/ui");
+      });
+
+      window.addEventListener("error", (event) => {
+        logEvent("error", "system", "window_error", event.message || "Unexpected error");
+      });
+
+      window.addEventListener("unhandledrejection", (event) => {
+        logEvent("error", "system", "unhandled_rejection", event.reason?.message || "Unhandled promise rejection");
+      });
+    </script>
+  </body>
+</html>
