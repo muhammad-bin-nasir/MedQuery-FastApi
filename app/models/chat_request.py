@@ -14,6 +14,7 @@ class ChatRequest(Base):
     business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("businesses.id"))
     workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"))
     user_id: Mapped[str] = mapped_column(String(255))
+    chat_header: Mapped[str | None] = mapped_column(String(255), nullable=True)
     query_text: Mapped[str] = mapped_column(String)
     retrieved_chunk_ids: Mapped[str] = mapped_column(String)
 

@@ -26,6 +26,7 @@ class ChatService:
         business_id: uuid.UUID,
         workspace_id: uuid.UUID,
         user_id: str,
+        chat_header: str | None,
         query: str,
         prompt_engineering: str,
         config: WorkspaceConfig,
@@ -156,6 +157,7 @@ class ChatService:
                 business_id=business_id,
                 workspace_id=workspace_id,
                 user_id=user_id,
+                chat_header=chat_header,
                 query_text=query,
                 retrieved_chunk_ids=json.dumps([str(chunk.id) for chunk, _, _ in chunks]),
             )
@@ -163,6 +165,7 @@ class ChatService:
             await session.flush()
             chat_response = ChatResponse(
                 request_id=chat_request.id,
+                chat_header=chat_header,
                 answer_text=answer,
                 sources_json=json.dumps(sources),
                 model_used=model,

@@ -12,6 +12,7 @@ class ChatResponse(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_requests.id"))
+    chat_header: Mapped[str | None] = mapped_column(String(255), nullable=True)
     answer_text: Mapped[str] = mapped_column(String)
     sources_json: Mapped[str] = mapped_column(String)
     model_used: Mapped[str] = mapped_column(String(255))

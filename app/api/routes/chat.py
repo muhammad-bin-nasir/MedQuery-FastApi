@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import NoResultFound
 
@@ -10,6 +10,8 @@ from app.models import (
     Business,
     BusinessAdmin,
     ChatHeader,
+    ChatRequest as ChatRequestModel,
+    ChatResponse as ChatResponseModel,
     Workspace,
     WorkspaceConfig,
 )
@@ -34,6 +36,28 @@ async def delete_chat_header(
     if not header:
         raise HTTPException(status_code=404, detail="Chat header not found")
 
+    request_ids = (
+        (
+            await session.execute(
+                select(ChatRequestModel.id).where(
+                    ChatRequestModel.user_id == owner_user_id,
+                    ChatRequestModel.chat_header == chat_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    deleted_responses = 0
+    if request_ids:
+        response_delete_result = await session.execute(
+            delete(ChatResponseModel).where(ChatResponseModel.request_id.in_(request_ids))
+        )
+        deleted_responses = response_delete_result.rowcount or 0
+
+        await session.execute(delete(ChatRequestModel).where(ChatRequestModel.id.in_(request_ids)))
+
     await session.delete(header)
     await session.commit()
 
@@ -44,6 +68,8 @@ async def delete_chat_header(
         owner_user_id=owner_user_id,
         requester_admin_id=str(admin.id),
         requester_role=admin.role,
+        deleted_requests=len(request_ids),
+        deleted_responses=deleted_responses,
     )
 
     return {"status": "deleted", "chat_id": chat_id}
@@ -159,6 +185,7 @@ async def generate_chat(
             business_id=business.id,
             workspace_id=workspace.id,
             user_id=effective_user_id,
+            chat_header=payload.chat_id,
             query=payload.query,
             prompt_engineering=prompt_engineering,
             config=config,
