@@ -851,6 +851,17 @@
         renderMessages();
       };
 
+      const updateLastMessage = (newContent) => {
+        const chat = chats.find((entry) => entry.id === activeChatId);
+        if (!chat || !chat.messages.length) {
+          return;
+        }
+        const lastMessage = chat.messages[chat.messages.length - 1];
+        lastMessage.content = newContent;
+        saveChats(chats);
+        renderMessages();
+      };
+
       const buildPayload = (query) => {
         const activeChat = chats.find((entry) => entry.id === activeChatId);
         const basePayload = {
@@ -923,7 +934,6 @@
             setStatus(sendStatusEl, "Set Business and Workspace for RAG chat.", "error");
             return;
           }
-          // Prompt optional: API uses workspace config when not provided
         }
 
         if (!activeChatId) {
@@ -936,32 +946,114 @@
         setStatus(sendStatusEl, "Sending request...");
         logEvent("info", "chat", "chat_send", `mode=${modeEl.value}`);
 
-        const endpoint = modeEl.value === "retrieve" ? "/api/rag/retrieve" : "/api/chat/generate";
+        // For non-chat modes (retrieve), use the old endpoint
+        if (modeEl.value === "retrieve") {
+          const endpoint = "/api/rag/retrieve";
+          try {
+            const payload = buildPayload(query);
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: buildHeaders(),
+              body: JSON.stringify(payload),
+            });
+            const responseBody = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              const errMsg = Array.isArray(responseBody.detail) ? responseBody.detail.map(d => d.msg || d.loc?.join(".")).join("; ") : (responseBody.detail && typeof responseBody.detail === "object" ? JSON.stringify(responseBody.detail) : responseBody.detail || "Request failed.");
+              throw new Error(errMsg);
+            }
+            if (responseBody.retrieved_chunks != null) {
+              const lines = ["Retrieved " + responseBody.retrieved_chunks.length + " chunk(s):"];
+              (responseBody.retrieved_chunks || []).forEach((c, i) => {
+                lines.push("\n" + (i + 1) + ". " + (c.filename || "?") + (c.page != null ? " (page " + c.page + ")" : "") + " — " + (c.content || "").slice(0, 200) + (c.content && c.content.length > 200 ? "…" : ""));
+              });
+              appendMessage("assistant", lines.join("\n"));
+            } else {
+              appendMessage("assistant", JSON.stringify(responseBody, null, 2));
+            }
+            setStatus(sessionStatusEl, "Response received.", "success");
+            setStatus(sendStatusEl, "", "success");
+            logEvent("info", "chat", "chat_response_received");
+          } catch (error) {
+            appendMessage("system", `Error: ${error.message}`);
+            setStatus(sessionStatusEl, "Request failed.", "error");
+            setStatus(sendStatusEl, error.message, "error");
+            logEvent("error", "chat", "chat_request_failed", error.message);
+          }
+          return;
+        }
 
+        // Chat mode: use streaming endpoint
         try {
           const payload = buildPayload(query);
-          const response = await fetch(endpoint, 
-          {
+          appendMessage("assistant", "");
+          
+          const response = await fetch("/api/chat/stream", {
             method: "POST",
             headers: buildHeaders(),
             body: JSON.stringify(payload),
           });
-          const responseBody = await response.json().catch(() => ({}));
+
           if (!response.ok) {
-            const errMsg = Array.isArray(responseBody.detail) ? responseBody.detail.map(d => d.msg || d.loc?.join(".")).join("; ") : (responseBody.detail && typeof responseBody.detail === "object" ? JSON.stringify(responseBody.detail) : responseBody.detail || "Request failed.");
+            const errBody = await response.json().catch(() => ({}));
+            const errMsg = errBody.detail || `HTTP ${response.status}`;
             throw new Error(errMsg);
           }
-          if (isChatMode && responseBody.answer != null) {
-            appendMessage("assistant", formatChatResponse(responseBody));
-          } else if (modeEl.value === "retrieve" && responseBody.retrieved_chunks != null) {
-            const lines = ["Retrieved " + responseBody.retrieved_chunks.length + " chunk(s):"];
-            (responseBody.retrieved_chunks || []).forEach((c, i) => {
-              lines.push("\n" + (i + 1) + ". " + (c.filename || "?") + (c.page != null ? " (page " + c.page + ")" : "") + " — " + (c.content || "").slice(0, 200) + (c.content && c.content.length > 200 ? "…" : ""));
-            });
-            appendMessage("assistant", lines.join("\n"));
-          } else {
-            appendMessage("assistant", JSON.stringify(responseBody, null, 2));
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let messageContent = "";
+          let sources = [];
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines[lines.length - 1];
+
+            for (let i = 0; i < lines.length - 1; i++) {
+              const line = lines[i].trim();
+              if (!line.startsWith("data: ")) continue;
+
+              try {
+                const eventData = JSON.parse(line.slice(6));
+
+                if (eventData.type === "error") {
+                  throw new Error(eventData.message || "Streaming error");
+                }
+
+                if (eventData.type === "done") {
+                  sources = eventData.sources || [];
+                  break;
+                }
+
+                if (eventData.type === "start") {
+                  continue;
+                }
+
+                if (eventData.token) {
+                  messageContent += eventData.token;
+                  updateLastMessage(messageContent);
+                }
+              } catch (parseErr) {
+                // Ignore parse errors for malformed SSE lines
+                continue;
+              }
+            }
           }
+
+          // Finalize with sources if available
+          if (sources && sources.length > 0) {
+            const sourcesText = "\n\n---\nSources (" + sources.length + "):";
+            const sourceLines = sources.map((s, i) => {
+              return `  ${i + 1}. ${s.filename}${s.page != null ? ` (page ${s.page})` : ""}`;
+            }).join("\n");
+            messageContent = messageContent + sourcesText + "\n" + sourceLines;
+            updateLastMessage(messageContent);
+          }
+
           setStatus(sessionStatusEl, "Response received.", "success");
           setStatus(sendStatusEl, "", "success");
           logEvent("info", "chat", "chat_response_received");

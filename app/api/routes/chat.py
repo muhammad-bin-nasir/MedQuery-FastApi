@@ -1,4 +1,8 @@
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import NoResultFound
@@ -281,3 +285,122 @@ async def generate_chat(
     except Exception as e:
         log_chat("CHAT_ERROR", "Chat generate failed", step="generate", error=str(e), error_type=type(e).__name__)
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+@router.post("/stream")
+@limiter.limit("30/minute", key_func=get_user_key)
+async def stream_chat(
+    request: Request,
+    payload: ChatRequest,
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> StreamingResponse:
+    """Stream chat tokens via Server-Sent Events (SSE). Each event is a JSON line.
+
+    Token events:  ``data: {"token": "..."}``
+    Done event:    ``data: {"type": "done", "sources": [...]}``
+    Error event:   ``data: {"type": "error", "message": "..."}``
+    """
+    effective_user_id = admin.email
+    effective_user_uuid = admin.id
+
+    # ── Validate business / workspace / config before opening the stream ──
+    try:
+        business = (
+            await session.execute(
+                select(Business).where(Business.business_client_id == payload.business_client_id)
+            )
+        ).scalar_one_or_none()
+        if not business:
+            raise HTTPException(status_code=404, detail="Business not found")
+        if admin.role == "admin" and business.admin_id != admin.id:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+        workspace = (
+            await session.execute(
+                select(Workspace).where(
+                    Workspace.business_id == business.id,
+                    Workspace.workspace_id == payload.workspace_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not workspace:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        ensure_rag_access(admin, business_id=business.id, workspace_id=workspace.id)
+
+        config = (
+            await session.execute(
+                select(WorkspaceConfig).where(WorkspaceConfig.workspace_id == workspace.id)
+            )
+        ).scalar_one_or_none()
+        if not config:
+            raise HTTPException(status_code=404, detail="Workspace config not found.")
+
+        config_prompt = (getattr(config, "prompt_engineering", None) or "").strip()
+        prompt_engineering = (
+            config_prompt
+            or (payload.prompt_engineering or "").strip()
+            or "You are a medical assistant. Provide concise answers based on the context."
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_chat("CHAT_STREAM_ERROR", "Stream chat setup failed", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail=f"Stream chat failed: {str(e)}")
+
+    service = ChatService()
+
+    async def event_stream():
+        try:
+            # Send a start marker
+            import json as _json
+            yield f"data: {_json.dumps({'type': 'start'})}\n\n"
+            
+            token_count = 0
+            async for chunk in service.generate_response_stream(
+                session=session,
+                business_id=business.id,
+                workspace_id=workspace.id,
+                user_id=effective_user_id,
+                user_uuid=effective_user_uuid,
+                chat_header=payload.chat_id,
+                chat_title=payload.chat_title,
+                query=payload.query,
+                prompt_engineering=prompt_engineering,
+                config=config,
+                override=payload.chat_config_override.model_dump() if payload.chat_config_override else None,
+            ):
+                yield chunk
+                token_count += 1
+                await asyncio.sleep(0)  # Yield control immediately
+        except Exception as exc:
+            log_chat("CHAT_STREAM_ERROR", "Streaming chunk failed", error=str(exc), error_type=type(exc).__name__)
+            import json as _json
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+            "Transfer-Encoding": "chunked",
+        },
+    )
+
+
+@router.get("/test-stream")
+async def test_stream() -> StreamingResponse:
+    """Test endpoint to verify SSE streaming works at all."""
+    async def test_generator():
+        for i in range(10):
+            yield f"data: {json.dumps({'token': f'TOKEN_{i}', 'num': i})}\n\n"
+            await asyncio.sleep(0.1)
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    
+    return StreamingResponse(
+        test_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

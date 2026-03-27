@@ -1,13 +1,14 @@
 import json
 import re
 import uuid
+from collections.abc import AsyncGenerator
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.chat_logger import log_chat
 from app.core.config import get_settings
-from app.models import ChatRequest, ChatResponse, WorkspaceConfig
+from app.models import ChatHeader, ChatRequest, ChatResponse, WorkspaceConfig
 from app.services.embedding_service import EmbeddingService
 from app.services.retrieval_service import retrieve_chunks
 from app.services.system_config_service import get_openai_api_key
@@ -344,3 +345,208 @@ class ChatService:
         except Exception as e:
             log_chat("CHAT_ERROR", "OpenAI request failed (network/timeout/other)", step="openai_call", error=str(e), error_type=type(e).__name__)
             raise
+
+    async def _call_openai_stream(
+        self,
+        messages: list[dict],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        openai_api_key: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Yield raw token strings from the OpenAI streaming API."""
+        key = ((openai_api_key or self.settings.openai_api_key) or "").strip()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY not configured. Set it in System configurations.")
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        headers = {"Authorization": f"Bearer {key}"}
+        
+        token_count = 0
+        async with httpx.AsyncClient(base_url=self.settings.openai_base_url, timeout=120) as client:
+            async with client.stream("POST", "/chat/completions", json=payload, headers=headers) as response:
+                response.raise_for_status()
+                buffer = ""
+                async for byte_chunk in response.aiter_bytes():
+                    buffer += byte_chunk.decode("utf-8", errors="ignore")
+                    
+                    # Process complete lines (separated by \n\n in SSE)
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.rstrip()
+                        
+                        if not line or not line.startswith("data: "):
+                            continue
+                        
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            return
+                        
+                        try:
+                            chunk_json = json.loads(data_str)
+                            delta = chunk_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                token_count += 1
+                                yield delta
+                        except (json.JSONDecodeError, KeyError, IndexError, ValueError):
+                            continue
+
+    async def generate_response_stream(
+        self,
+        session: AsyncSession,
+        business_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        user_id: str,
+        user_uuid: uuid.UUID,
+        chat_header: str | None,
+        chat_title: str | None,
+        query: str,
+        prompt_engineering: str,
+        config: WorkspaceConfig,
+        override: dict | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Async generator that yields SSE-formatted strings for a streaming chat response."""
+        openai_api_key = (await get_openai_api_key(session)) or self.settings.openai_api_key
+
+        # ── Embedding ──────────────────────────────────────────────────────
+        embedding = (await self.embedding_service.embed_texts(
+            [query],
+            config.embedding_model,
+            use_local=config.use_local_embeddings,
+            openai_api_key=openai_api_key,
+        ))[0]
+
+        # ── Retrieval ──────────────────────────────────────────────────────
+        chunks = await retrieve_chunks(
+            session=session,
+            business_id=business_id,
+            workspace_id=workspace_id,
+            query_embedding=embedding,
+            top_k=config.top_k,
+            similarity_threshold=config.similarity_threshold,
+        )
+
+        # ── Medical / biological guard ─────────────────────────────────────
+        if _is_medical_or_biological(query) and not chunks:
+            chat_req = ChatRequest(
+                business_id=business_id,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                user_uuid=user_uuid,
+                chat_header=chat_header,
+                query_text=query,
+                retrieved_chunk_ids=json.dumps([]),
+            )
+            session.add(chat_req)
+            await session.flush()
+            session.add(ChatResponse(
+                request_id=chat_req.id,
+                chat_header=chat_header,
+                answer_text=_NO_RAG_ANSWER,
+                sources_json=json.dumps([]),
+                model_used="N/A",
+                tokens_json=json.dumps({}),
+            ))
+            await session.commit()
+            for piece in re.findall(r"\S+\s*|\s+", _NO_RAG_ANSWER):
+                if piece:
+                    yield f"data: {json.dumps({'token': piece})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'sources': [], 'usage': {}})}\n\n"
+            return
+
+        # ── Build prompt ───────────────────────────────────────────────────
+        context = "\n\n".join([chunk.content for chunk, _, _ in chunks])
+        user_content = f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
+        messages = [
+            {"role": "system", "content": prompt_engineering},
+            {"role": "user", "content": user_content},
+        ]
+
+        # ── Resolve model params ───────────────────────────────────────────
+        model = (override.get("model") or config.chat_model_default) if override else config.chat_model_default
+        model = model or self.settings.default_chat_model
+        temperature = (
+            (override.get("temperature") if override and "temperature" in override else config.chat_temperature_default)
+            if override else config.chat_temperature_default
+        ) or config.chat_temperature_default
+        max_tokens = (
+            (override.get("max_tokens") if override and "max_tokens" in override else config.chat_max_tokens_default)
+            if override else config.chat_max_tokens_default
+        ) or config.chat_max_tokens_default
+
+        # ── Stream tokens from OpenAI ──────────────────────────────────────
+        full_answer = ""
+        async for token in self._call_openai_stream(messages, model, temperature, max_tokens, openai_api_key=openai_api_key):
+            full_answer += token
+            # Some providers send multi-word deltas; split them so UI receives
+            # a more natural token-by-token stream.
+            for piece in re.findall(r"\S+\s*|\s+", token):
+                if piece:
+                    yield f"data: {json.dumps({'token': piece})}\n\n"
+
+        # ── Build sources ──────────────────────────────────────────────────
+        sources = [
+            {
+                "document_id": str(chunk.document_id),
+                "filename": filename,
+                "page": chunk.page_number,
+                "chunk_id": str(chunk.id),
+                "snippet": chunk.content[:240],
+            }
+            for chunk, filename, _ in chunks
+        ]
+
+        # ── Save chat request + response to DB ─────────────────────────────
+        chat_req = ChatRequest(
+            business_id=business_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            user_uuid=user_uuid,
+            chat_header=chat_header,
+            query_text=query,
+            retrieved_chunk_ids=json.dumps([str(chunk.id) for chunk, _, _ in chunks]),
+        )
+        session.add(chat_req)
+        await session.flush()
+        session.add(ChatResponse(
+            request_id=chat_req.id,
+            chat_header=chat_header,
+            answer_text=full_answer,
+            sources_json=json.dumps(sources),
+            model_used=model,
+            tokens_json=json.dumps({}),
+        ))
+        await session.commit()
+
+        # ── Update or create ChatHeader ────────────────────────────────────
+        if chat_header:
+            from sqlalchemy import select as sa_select
+            header_stmt = sa_select(ChatHeader).where(
+                ChatHeader.owner_user_uuid == user_uuid,
+                ChatHeader.business_id == business_id,
+                ChatHeader.workspace_id == workspace_id,
+                ChatHeader.chat_id == chat_header,
+            )
+            header = (await session.execute(header_stmt)).scalar_one_or_none()
+            fallback_title = query.strip().split("\n", 1)[0][:80] or "New chat"
+            title = (chat_title or "").strip() or fallback_title
+            if header:
+                header.title = title
+            else:
+                session.add(ChatHeader(
+                    owner_user_id=user_id,
+                    owner_user_uuid=user_uuid,
+                    business_id=business_id,
+                    workspace_id=workspace_id,
+                    chat_id=chat_header,
+                    title=title,
+                ))
+            await session.commit()
+
+        # ── Done signal ────────────────────────────────────────────────────
+        yield f"data: {json.dumps({'type': 'done', 'sources': sources})}\n\n"
