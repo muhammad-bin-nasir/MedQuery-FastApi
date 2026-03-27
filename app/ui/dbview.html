@@ -328,6 +328,10 @@
       const profileToggle = document.getElementById("profile-toggle");
       const profileDropdown = document.getElementById("profile-dropdown");
       const logoutButton = document.getElementById("logout");
+        const token = localStorage.getItem("adminToken");
+        if (!token) {
+          window.location.assign("/ui");
+        }
 
       const logEvent = (level, tag, action, details = "") => {
         const logStorageKey = "systemLogs";

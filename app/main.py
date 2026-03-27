@@ -7,7 +7,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.routes import (
     auth_router,
@@ -24,6 +28,7 @@ from app.api.routes import (
 )
 from app.core.config import get_settings
 from app.core.crash_logger import crash_logger
+from app.core.limiter import limiter
 from app.core.seed import seed_initial_admin
 
 settings = get_settings()
@@ -86,9 +91,79 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     openapi_url="/openapi.json",
-    docs_url="/docs",
+        docs_url=None,
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html() -> HTMLResponse:
+    """Serve Swagger UI and pre-fill Bearer auth from localStorage adminToken."""
+    response = get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_ui_parameters={"persistAuthorization": True},
+    )
+
+    html = response.body.decode("utf-8")
+    auto_auth_script = """
+<script>
+(function () {
+    function normalizeToken(raw) {
+        if (!raw || typeof raw !== "string") return "";
+        return raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim();
+    }
+
+    function tryAuthorize(attemptsLeft) {
+        if (!window.ui || typeof window.ui.preauthorizeApiKey !== "function") {
+            if (attemptsLeft > 0) {
+                setTimeout(function () { tryAuthorize(attemptsLeft - 1); }, 200);
+            }
+            return;
+        }
+
+        var token = normalizeToken(localStorage.getItem("adminToken"));
+        if (!token) {
+            console.warn("[Swagger Docs] No adminToken found in localStorage");
+            return;
+        }
+
+        console.log("[Swagger Docs] Attempting to authorize with token (length=" + token.length + ")");
+
+        // Try HTTPBearer (FastAPI default for HTTPBearer)
+        try {
+            window.ui.preauthorizeApiKey("HTTPBearer", token);
+            console.log("[Swagger Docs] Successfully authorized HTTPBearer scheme");
+        } catch (e) {
+            console.log("[Swagger Docs] preauthorizeApiKey failed: " + e.message);
+        }
+
+        // Also try authActions.authorize as fallback
+        try {
+            if (window.ui.authActions && typeof window.ui.authActions.authorize === "function") {
+                var auth = {
+                    "HTTPBearer": {
+                        name: "HTTPBearer",
+                        schema: { type: "http", scheme: "bearer" },
+                        value: token
+                    }
+                };
+                window.ui.authActions.authorize(auth);
+                console.log("[Swagger Docs] authActions.authorize succeeded");
+            }
+        } catch (e) {
+            console.log("[Swagger Docs] authActions.authorize failed: " + e.message);
+        }
+    }
+
+    tryAuthorize(50);
+})();
+</script>
+"""
+    html = html.replace("</body>", auto_auth_script + "\n</body>")
+    return HTMLResponse(content=html, status_code=response.status_code)
 
 
 @app.exception_handler(HTTPException)
@@ -158,6 +233,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
                 "traceback": exc_traceback_str if settings.environment == "development" else None,
             },
         },
+    )
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"status": 429, "message": "Too many requests. Please try again later.", "details": {}},
     )
 
 

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MedQuery Admin Workspace</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-2: #1f2937;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --border: #334155;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      header {
+        padding: 24px 32px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(135deg, #0f172a 0%, #111827 100%);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 600;
+      }
+
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .profile-menu {
+        position: relative;
+      }
+
+      .profile-button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 12px;
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(56, 189, 248, 0.3);
+        display: grid;
+        place-items: center;
+        font-weight: 600;
+        color: var(--accent);
+      }
+
+      .dropdown {
+        position: absolute;
+        right: 0;
+        top: 48px;
+        min-width: 220px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.45);
+        padding: 8px;
+        display: none;
+        z-index: 10;
+      }
+
+      .dropdown.open {
+        display: grid;
+        gap: 4px;
+      }
+
+      .dropdown a,
+      .dropdown button {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: none;
+        background: transparent;
+        color: var(--text);
+        text-decoration: none;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .dropdown a:hover,
+      .dropdown button:hover {
+        background: rgba(56, 189, 248, 0.12);
+      }
+
+      main {
+        padding: 32px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.45);
+      }
+
+      .quick-links {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+
+      .link-card {
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--panel-2);
+      }
+
+      .link-card h3 {
+        margin: 0 0 6px;
+        font-size: 14px;
+      }
+
+      .link-card p {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .link-card a {
+        color: var(--accent);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Admin Workspace</h1>
+        <p>Choose a module to continue.</p>
+      </div>
+      <div class="profile-menu">
+        <button class="profile-button" id="profile-toggle" type="button">
+          <span class="avatar" id="profile-avatar">A</span>
+          <span id="profile-name">Admin</span>
+        </button>
+        <div class="dropdown" id="profile-dropdown">
+          <a href="/profile">Profile</a>
+          <a href="/chat">Chat workspace</a>
+          <a href="/rag-builder">RAG builder</a>
+          <a href="/database-overview">Database overview</a>
+          <a href="/assignments">Assignments</a>
+          <a href="/system-config">System configurations</a>
+          <a href="/system-logs">System logs</a>
+          <button type="button" id="logout">Sign out</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Workspace Access</h2>
+        <div class="quick-links">
+          <div class="link-card">
+            <h3>Chat Workspace</h3>
+            <p>Start a new chat and manage chat history.</p>
+            <a href="/chat">Open chat interface →</a>
+          </div>
+          <div class="link-card">
+            <h3>Assignments</h3>
+            <p>Manage business assignments and workspace access.</p>
+            <a href="/assignments">Open assignments →</a>
+          </div>
+          <div class="link-card">
+            <h3>RAG Builder</h3>
+            <p>Upload documents and monitor RAG coverage.</p>
+            <a href="/rag-builder">Open RAG builder →</a>
+          </div>
+          <div class="link-card">
+            <h3>Database Overview</h3>
+            <p>Review tables and core metadata.</p>
+            <a href="/database-overview">Open database overview →</a>
+          </div>
+          <div class="link-card">
+            <h3>System Configurations</h3>
+            <p>Manage global app and provider configuration.</p>
+            <a href="/system-config">Open system configurations →</a>
+          </div>
+          <div class="link-card">
+            <h3>System Logs</h3>
+            <p>Review recorded actions, warnings, and errors.</p>
+            <a href="/system-logs">Open system logs →</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        window.location.assign("/login");
+      }
+
+      const profileName = document.getElementById("profile-name");
+      const profileAvatar = document.getElementById("profile-avatar");
+      const profileToggle = document.getElementById("profile-toggle");
+      const profileDropdown = document.getElementById("profile-dropdown");
+      const logoutButton = document.getElementById("logout");
+
+      const email = localStorage.getItem("adminEmail") || "Admin";
+      profileName.textContent = email;
+      profileAvatar.textContent = email.charAt(0).toUpperCase();
+
+      profileToggle.addEventListener("click", () => {
+        profileDropdown.classList.toggle("open");
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!profileToggle.contains(event.target) && !profileDropdown.contains(event.target)) {
+          profileDropdown.classList.remove("open");
+        }
+      });
+
+      logoutButton.addEventListener("click", () => {
+        localStorage.removeItem("adminToken");
+        localStorage.removeItem("adminBusinessId");
+        localStorage.removeItem("adminWorkspaceId");
+        localStorage.removeItem("adminRole");
+        localStorage.removeItem("adminEmail");
+        localStorage.removeItem("adminLoginAt");
+        window.location.assign("/login");
+      });
+    </script>
+  </body>
+</html>

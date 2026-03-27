@@ -1,11 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.limiter import limiter
+from app.core.security import create_access_token, get_password_hash, normalize_email, verify_password
 from app.db.session import get_session
 from app.models import Business, BusinessAdmin, Workspace
 from app.schemas.auth import CreateAdminRequest, LoginRequest, TokenResponse
@@ -15,12 +16,14 @@ router = APIRouter(prefix="/admin/auth", tags=["Admin Auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
+@limiter.limit("10/minute")
+async def login(request: Request, payload: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
     business = None
+    normalized_email = normalize_email(payload.email)
 
-    stmt = select(BusinessAdmin).where(BusinessAdmin.email == request.email)
+    stmt = select(BusinessAdmin).where(BusinessAdmin.email_normalized == normalized_email)
     admin = (await session.execute(stmt)).scalar_one_or_none()
-    if not admin or not verify_password(request.password, admin.password_hash):
+    if not admin or not verify_password(payload.password, admin.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if admin.role == "admin":
@@ -59,7 +62,8 @@ async def create_admin(
     request: CreateAdminRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    stmt = select(BusinessAdmin).where(BusinessAdmin.email == request.email)
+    normalized_email = normalize_email(request.email)
+    stmt = select(BusinessAdmin).where(BusinessAdmin.email_normalized == normalized_email)
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="User already exists")
@@ -68,7 +72,8 @@ async def create_admin(
         id=uuid.uuid4(),
         business_id=None,
         workspace_id=None,
-        email=request.email,
+        email=normalized_email,
+        email_normalized=normalized_email,
         password_hash=get_password_hash(request.password),
         role="admin",
     )
@@ -83,6 +88,8 @@ async def create_user(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(require_admin),
 ) -> dict:
+    normalized_email = normalize_email(request.email)
+
     # Validate business exists
     stmt = select(Business).where(Business.business_client_id == request.business_client_id)
     business = (await session.execute(stmt)).scalar_one_or_none()
@@ -103,7 +110,8 @@ async def create_user(
 
     # Prevent duplicates
     stmt = select(BusinessAdmin).where(
-        BusinessAdmin.business_id == business.id, BusinessAdmin.email == request.email
+        BusinessAdmin.business_id == business.id,
+        BusinessAdmin.email_normalized == normalized_email,
     )
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing:
@@ -113,7 +121,8 @@ async def create_user(
         id=uuid.uuid4(),
         business_id=business.id,
         workspace_id=workspace.id,
-        email=request.email,
+        email=normalized_email,
+        email_normalized=normalized_email,
         password_hash=get_password_hash(request.password),
         role="user",
     )

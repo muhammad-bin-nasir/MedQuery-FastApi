@@ -15,5 +15,6 @@ python-multipart==0.0.9
 psutil==5.9.8
 pytest==8.3.3
 bcrypt==3.2.2
+slowapi>=0.1.9
 # Local embeddings support (pulls PyTorch ~1–2GB, may cause long Docker builds)
 sentence-transformers>=2.2.0

@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 
 import httpx
@@ -14,6 +15,59 @@ from app.services.system_config_service import get_openai_api_key
 PROMPT_PREVIEW_MAX = 800
 ANSWER_PREVIEW_MAX = 500
 
+# ---------------------------------------------------------------------------
+# Medical / biological topic guard
+# ---------------------------------------------------------------------------
+_MEDICAL_BIO_KEYWORDS: frozenset[str] = frozenset({
+    # Medical
+    "disease", "diseases", "diagnosis", "diagnose", "diagnosed", "diagnostic",
+    "treatment", "treatments", "treat", "therapy", "therapies", "therapeutic",
+    "medication", "medications", "medicine", "medicines", "drug", "drugs",
+    "symptom", "symptoms", "patient", "patients",
+    "doctor", "physician", "surgeon", "surgery", "surgical",
+    "clinical", "hospital", "prescription", "prescribe", "prescribed",
+    "dosage", "dose", "doses", "injection", "injections",
+    "vaccine", "vaccines", "vaccination", "antibiotic", "antibiotics",
+    "cancer", "tumor", "tumour", "infection", "infections", "infectious",
+    "fever", "bleeding", "wound", "wounds", "injury", "injuries",
+    "medical", "healthcare", "illness", "illnesses", "sick", "sickness",
+    "disorder", "disorders", "syndrome", "syndromes",
+    "allergy", "allergies", "allergic", "asthma", "diabetes", "hypertension",
+    "cholesterol", "cardiac", "stroke", "seizure", "epilepsy",
+    "arthritis", "osteoporosis", "anatomy", "physiology",
+    "pathology", "pathological", "pharmacology", "pharmaceutical",
+    "prognosis", "biopsy", "dissection",
+    # Biological
+    "biology", "biological", "cell", "cells", "cellular",
+    "dna", "rna", "protein", "proteins",
+    "gene", "genes", "genetic", "genetics", "genome", "genomic",
+    "organism", "organisms",
+    "bacteria", "bacterial", "bacterium", "virus", "viral", "viruses",
+    "evolution", "evolutionary", "species",
+    "chromosome", "chromosomes", "enzyme", "enzymes",
+    "metabolism", "metabolic", "metabolize",
+    "photosynthesis", "mitosis", "meiosis", "mutation", "mutations",
+    "microorganism", "microbe", "microbes", "microbiology",
+    "biochemistry", "biochemical",
+    "tissue", "tissues", "organ", "organs",
+    "muscle", "muscles", "nerve", "nerves", "neuron", "neurons",
+    "immune", "immunity", "antibody", "antibodies", "antigen", "antigens",
+    "pathogen", "pathogens", "heredity", "hereditary",
+    "prokaryote", "eukaryote",
+})
+
+_NO_RAG_ANSWER = (
+    "I'm sorry, I couldn't find an answer to your question in the available knowledge base. "
+    "Medical and biological questions can only be answered using the uploaded documents, "
+    "and no relevant information was found for your query."
+)
+
+
+def _is_medical_or_biological(query: str) -> bool:
+    """Return True if the query contains medical or biological terminology."""
+    words = {w.lower() for w in re.findall(r"\b[a-zA-Z]+\b", query)}
+    return bool(words & _MEDICAL_BIO_KEYWORDS)
+
 
 class ChatService:
     def __init__(self) -> None:
@@ -26,6 +80,7 @@ class ChatService:
         business_id: uuid.UUID,
         workspace_id: uuid.UUID,
         user_id: str,
+        user_uuid: uuid.UUID,
         chat_header: str | None,
         query: str,
         prompt_engineering: str,
@@ -84,6 +139,48 @@ class ChatService:
         except Exception as e:
             log_chat("CHAT_ERROR", f"Step failed: retrieval", step="retrieval", error=str(e), error_type=type(e).__name__)
             raise
+
+        # ------------------------------------------------------------------
+        # Medical / biological guard: require RAG context for these topics.
+        # If no chunks were retrieved, return a generic no-answer message
+        # without calling the LLM.
+        # ------------------------------------------------------------------
+        if _is_medical_or_biological(query) and not chunks:
+            log_chat(
+                "CHAT_RESTRICTED_NO_CONTEXT",
+                "Medical/biological query blocked — no RAG context available",
+                business_id=str(business_id),
+                workspace_id=str(workspace_id),
+                user_id=user_id,
+                query=query,
+            )
+            try:
+                chat_request = ChatRequest(
+                    business_id=business_id,
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    user_uuid=user_uuid,
+                    chat_header=chat_header,
+                    query_text=query,
+                    retrieved_chunk_ids=json.dumps([]),
+                )
+                session.add(chat_request)
+                await session.flush()
+                chat_response = ChatResponse(
+                    request_id=chat_request.id,
+                    chat_header=chat_header,
+                    answer_text=_NO_RAG_ANSWER,
+                    sources_json=json.dumps([]),
+                    model_used="N/A",
+                    tokens_json=json.dumps({}),
+                )
+                session.add(chat_response)
+                await session.commit()
+                log_chat("CHAT_SAVED", "No-answer record saved to DB", request_id=str(chat_request.id))
+            except Exception as e:
+                log_chat("CHAT_ERROR", "Step failed: save no-answer to DB", step="save", error=str(e), error_type=type(e).__name__)
+                raise
+            return _NO_RAG_ANSWER, [], {}
 
         context = "\n\n".join([chunk.content for chunk, _, _ in chunks])
         system_prompt = prompt_engineering
@@ -157,6 +254,7 @@ class ChatService:
                 business_id=business_id,
                 workspace_id=workspace_id,
                 user_id=user_id,
+                user_uuid=user_uuid,
                 chat_header=chat_header,
                 query_text=query,
                 retrieved_chunk_ids=json.dumps([str(chunk.id) for chunk, _, _ in chunks]),

@@ -16,6 +16,10 @@ class TokenPayload:
         self.role = role
 
 
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 def create_access_token(subject: str, business_id: str | None, role: str) -> str:
     settings = get_settings()
     expire = datetime.utcnow() + timedelta(minutes=settings.jwt_access_token_expire_minutes)

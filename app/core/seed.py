@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError, OperationalError
 
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, normalize_email
 from app.db.session import AsyncSessionLocal
 from app.models import Business, BusinessAdmin, Workspace, WorkspaceConfig
 
@@ -21,13 +21,16 @@ DEFAULT_WORKSPACE_NAME = "Main Workspace"
 async def seed_initial_admin() -> None:
     """Seed initial admin user. Gracefully handles missing database tables."""
     try:
+        normalized_default_admin_email = normalize_email(DEFAULT_ADMIN_EMAIL)
         async with AsyncSessionLocal() as session:
             # ✅ Allow multiple admins in DB:
             # Only skip seeding if the DEFAULT admin email already exists.
             try:
                 existing_admin_id = (
                     await session.execute(
-                        select(BusinessAdmin.id).where(BusinessAdmin.email == DEFAULT_ADMIN_EMAIL)
+                        select(BusinessAdmin.id).where(
+                            BusinessAdmin.email_normalized == normalized_default_admin_email
+                        )
                     )
                 ).scalar_one_or_none()
             except (ProgrammingError, OperationalError) as e:
@@ -83,7 +86,8 @@ async def seed_initial_admin() -> None:
             admin = BusinessAdmin(
                 id=uuid.uuid4(),
                 business_id=business.id,
-                email=DEFAULT_ADMIN_EMAIL,
+                email=normalized_default_admin_email,
+                email_normalized=normalized_default_admin_email,
                 password_hash=get_password_hash(DEFAULT_ADMIN_PASSWORD),
                 role="super_admin",
             )

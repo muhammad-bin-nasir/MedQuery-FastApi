@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MedQuery Admin Login</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-2: #1f2937;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-2: #0ea5e9;
+        --success: #22c55e;
+        --border: #334155;
+        --error: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        padding: 24px 32px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(135deg, #0f172a 0%, #111827 100%);
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 600;
+      }
+
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      main {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      .panel {
+        width: 100%;
+        max-width: 420px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.45);
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        padding: 12px;
+        background: var(--panel-2);
+        color: var(--text);
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+
+      input:focus {
+        outline: 2px solid rgba(56, 189, 248, 0.35);
+        border-color: rgba(56, 189, 248, 0.6);
+      }
+
+      button {
+        width: 100%;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        background: var(--accent);
+        color: #0f172a;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.15s ease, background 0.15s ease;
+      }
+
+      button:hover {
+        background: var(--accent-2);
+        transform: translateY(-1px);
+      }
+
+      .status {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 12px;
+      }
+
+      .status.success {
+        color: var(--success);
+      }
+
+      .status.error {
+        color: var(--error);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Admin Login</h1>
+      <p>Sign in to access the admin workspace.</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Sign in</h2>
+        <p class="status" id="login-hint">
+          Use the seeded super admin (admin@example.com / password) or your assigned credentials.
+        </p>
+
+        <label for="email">Admin Email</label>
+        <input id="email" placeholder="admin@example.com" value="admin@example.com" />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="password" value="password" />
+
+        <button id="login-button" type="button">Login and Continue</button>
+        <div class="status" id="login-status">Awaiting login.</div>
+      </section>
+    </main>
+
+    <script>
+      const loginButton = document.getElementById("login-button");
+      const statusEl = document.getElementById("login-status");
+      const emailInput = document.getElementById("email");
+      const passwordInput = document.getElementById("password");
+
+      const logEvent = (level, tag, action, details = "") => {
+        const logStorageKey = "systemLogs";
+        const logs = JSON.parse(localStorage.getItem(logStorageKey) || "[]");
+        logs.unshift({
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          level,
+          tag,
+          action,
+          details,
+        });
+        localStorage.setItem(logStorageKey, JSON.stringify(logs.slice(0, 500)));
+      };
+
+      const setStatus = (message, type = "") => {
+        statusEl.textContent = message;
+        statusEl.classList.remove("success", "error");
+        if (type) {
+          statusEl.classList.add(type);
+        }
+      };
+
+      const setLoading = (isLoading) => {
+        loginButton.disabled = isLoading;
+        loginButton.textContent = isLoading ? "Signing in..." : "Login and Continue";
+      };
+
+      const saveAdminSession = (payload) => {
+        const email = emailInput.value.trim();
+        localStorage.setItem("adminToken", payload.access_token);
+        localStorage.setItem("adminBusinessId", payload.business_client_id || "");
+        localStorage.setItem("adminWorkspaceId", payload.workspace_id || "");
+        localStorage.setItem("adminRole", payload.role || "");
+        localStorage.setItem("adminEmail", email);
+        localStorage.setItem("adminLoginAt", new Date().toISOString());
+      };
+
+      if (localStorage.getItem("adminToken")) {
+        window.location.assign("/ui");
+      }
+
+      loginButton.addEventListener("click", async () => {
+        const email = emailInput.value.trim();
+        const password = passwordInput.value.trim();
+
+        if (!email || !password) {
+          setStatus("Please provide email and password.", "error");
+          logEvent("warning", "auth", "login_validation_failed", "Missing credentials.");
+          return;
+        }
+
+        setLoading(true);
+        setStatus("Signing in...");
+        logEvent("info", "auth", "login_attempt", `email=${email}`);
+
+        try {
+          const response = await fetch("/api/admin/auth/login", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ email, password }),
+          });
+
+          if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({}));
+            throw new Error(errorBody.detail || "Login failed.");
+          }
+
+          const payload = await response.json();
+          saveAdminSession(payload);
+          setStatus("Login successful. Redirecting to workspace...", "success");
+          logEvent("info", "auth", "login_success", `business=${payload.business_client_id || ""}`);
+          window.location.assign("/ui");
+        } catch (error) {
+          setStatus(`Login failed: ${error.message}`, "error");
+          logEvent("error", "auth", "login_failed", error.message);
+        } finally {
+          setLoading(false);
+        }
+      });
+    </script>
+  </body>
+</html>

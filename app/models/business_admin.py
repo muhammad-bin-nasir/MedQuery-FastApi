@@ -11,7 +11,7 @@ from app.models.base import Base
 class BusinessAdmin(Base):
     __tablename__ = "users"
     __table_args__ = (
-        UniqueConstraint("business_id", "email", name="uq_admin_business_email"),
+        UniqueConstraint("business_id", "email_normalized", name="uq_admin_business_email_normalized"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -22,6 +22,7 @@ class BusinessAdmin(Base):
         UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True
     )
     email: Mapped[str] = mapped_column(String(255))
+    email_normalized: Mapped[str] = mapped_column(String(255), index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(50), default="admin")
 

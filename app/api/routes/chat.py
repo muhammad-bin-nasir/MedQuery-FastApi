@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import NoResultFound
 
 from app.api.deps import ensure_rag_access, get_current_admin, require_admin
 from app.core.chat_logger import log_chat
+from app.core.limiter import get_user_key, limiter
+from app.core.security import normalize_email
 from app.db.session import get_session
 from app.models import (
     Business,
@@ -21,6 +23,19 @@ from app.services.chat_service import ChatService
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+def _map_chat_headers(headers: list[ChatHeader]) -> list[ChatHistoryItem]:
+    return [
+        ChatHistoryItem(
+            chat_id=header.chat_id,
+            title=header.title,
+            user_id=header.owner_user_id or (str(header.owner_user_uuid) if header.owner_user_uuid else ""),
+            created_at=header.created_at.isoformat(),
+            updated_at=header.updated_at.isoformat() if header.updated_at else None,
+        )
+        for header in headers
+    ]
+
+
 @router.delete("/headers/{chat_id}")
 async def delete_chat_header(
     chat_id: str,
@@ -28,8 +43,12 @@ async def delete_chat_header(
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> dict:
     owner_user_id = admin.email
+    owner_user_uuid = admin.id
     stmt = select(ChatHeader).where(
-        ChatHeader.owner_user_id == owner_user_id,
+        or_(
+            ChatHeader.owner_user_uuid == owner_user_uuid,
+            and_(ChatHeader.owner_user_uuid.is_(None), ChatHeader.owner_user_id == owner_user_id),
+        ),
         ChatHeader.chat_id == chat_id,
     )
     header = (await session.execute(stmt)).scalar_one_or_none()
@@ -40,7 +59,12 @@ async def delete_chat_header(
         (
             await session.execute(
                 select(ChatRequestModel.id).where(
-                    ChatRequestModel.user_id == owner_user_id,
+                    or_(
+                        ChatRequestModel.user_uuid == owner_user_uuid,
+                        and_(ChatRequestModel.user_uuid.is_(None), ChatRequestModel.user_id == owner_user_id),
+                    ),
+                    ChatRequestModel.business_id == header.business_id,
+                    ChatRequestModel.workspace_id == header.workspace_id,
                     ChatRequestModel.chat_header == chat_id,
                 )
             )
@@ -75,49 +99,65 @@ async def delete_chat_header(
     return {"status": "deleted", "chat_id": chat_id}
 
 
+@router.get("/headers/me", response_model=ChatHistoryResponse)
+async def get_my_chat_headers(
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> ChatHistoryResponse:
+    owner_user_id = admin.email
+    owner_user_uuid = admin.id
+    stmt = (
+        select(ChatHeader)
+        .where(
+            or_(
+                ChatHeader.owner_user_uuid == owner_user_uuid,
+                and_(ChatHeader.owner_user_uuid.is_(None), ChatHeader.owner_user_id == owner_user_id),
+            )
+        )
+        .order_by(ChatHeader.updated_at.desc(), ChatHeader.created_at.desc())
+    )
+    headers = (await session.execute(stmt)).scalars().all()
+    chats = _map_chat_headers(headers)
+    return ChatHistoryResponse(user_id=owner_user_id, count=len(chats), chats=chats)
+
+
 @router.get("/history/{user_id}", response_model=ChatHistoryResponse)
 async def get_user_chat_history(
     user_id: str,
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(require_admin),
 ) -> ChatHistoryResponse:
+    requested_owner = normalize_email(user_id)
     stmt = (
         select(ChatHeader)
-        .where(ChatHeader.owner_user_id == user_id)
+        .where(ChatHeader.owner_user_id == requested_owner)
         .order_by(ChatHeader.updated_at.desc(), ChatHeader.created_at.desc())
     )
     headers = (await session.execute(stmt)).scalars().all()
-
-    chats = [
-        ChatHistoryItem(
-            chat_id=header.chat_id,
-            title=header.title,
-            user_id=header.owner_user_id,
-            created_at=header.created_at.isoformat(),
-            updated_at=header.updated_at.isoformat() if header.updated_at else None,
-        )
-        for header in headers
-    ]
+    chats = _map_chat_headers(headers)
 
     log_chat(
         "CHAT_HISTORY_FETCHED",
         "Admin fetched chat history by user_id",
-        requested_user_id=user_id,
+        requested_user_id=requested_owner,
         requester_admin_id=str(admin.id),
         requester_role=admin.role,
         count=len(chats),
     )
 
-    return ChatHistoryResponse(user_id=user_id, count=len(chats), chats=chats)
+    return ChatHistoryResponse(user_id=requested_owner, count=len(chats), chats=chats)
 
 
 @router.post("/generate", response_model=ChatResponse)
+@limiter.limit("30/minute", key_func=get_user_key)
 async def generate_chat(
+    request: Request,
     payload: ChatRequest,
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> ChatResponse:
     effective_user_id = admin.email
+    effective_user_uuid = admin.id
     log_chat(
         "CHAT_REQUEST_RECEIVED",
         "Chat /generate request received",
@@ -185,6 +225,7 @@ async def generate_chat(
             business_id=business.id,
             workspace_id=workspace.id,
             user_id=effective_user_id,
+            user_uuid=effective_user_uuid,
             chat_header=payload.chat_id,
             query=payload.query,
             prompt_engineering=prompt_engineering,
@@ -194,7 +235,9 @@ async def generate_chat(
 
         if payload.chat_id:
             header_stmt = select(ChatHeader).where(
-                ChatHeader.owner_user_id == effective_user_id,
+                ChatHeader.owner_user_uuid == effective_user_uuid,
+                ChatHeader.business_id == business.id,
+                ChatHeader.workspace_id == workspace.id,
                 ChatHeader.chat_id == payload.chat_id,
             )
             header = (await session.execute(header_stmt)).scalar_one_or_none()
@@ -207,6 +250,9 @@ async def generate_chat(
                 session.add(
                     ChatHeader(
                         owner_user_id=effective_user_id,
+                        owner_user_uuid=effective_user_uuid,
+                        business_id=business.id,
+                        workspace_id=workspace.id,
                         chat_id=payload.chat_id,
                         title=title,
                     )

@@ -5,7 +5,8 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter()
 
-_UI_PATH = Path(__file__).resolve().parents[2] / "ui" / "index.html"
+_UI_PATH = Path(__file__).resolve().parents[2] / "ui" / "ui.html"
+_LOGIN_PATH = Path(__file__).resolve().parents[2] / "ui" / "login.html"
 _CHAT_PATH = Path(__file__).resolve().parents[2] / "ui" / "chat.html"
 _DBVIEW_PATH = Path(__file__).resolve().parents[2] / "ui" / "dbview.html"
 _ASSIGNMENTS_PATH = Path(__file__).resolve().parents[2] / "ui" / "assignments.html"
@@ -18,6 +19,12 @@ _SYSTEM_LOGS_PATH = Path(__file__).resolve().parents[2] / "ui" / "system-logs.ht
 @router.get("/ui", response_class=HTMLResponse)
 async def ui() -> HTMLResponse:
     html_content = _UI_PATH.read_text(encoding="utf-8")
+    return HTMLResponse(content=html_content)
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login() -> HTMLResponse:
+    html_content = _LOGIN_PATH.read_text(encoding="utf-8")
     return HTMLResponse(content=html_content)
 
 

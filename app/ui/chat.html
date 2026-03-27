@@ -636,6 +636,58 @@
       let activeChatId = chats[0]?.id || null;
       let contextMenuChatId = null;
 
+      const syncChatsFromServer = async () => {
+        try {
+          const response = await fetch("/api/chat/headers/me", {
+            headers: buildHeaders(),
+          });
+          if (!response.ok) {
+            return;
+          }
+
+          const body = await response.json().catch(() => null);
+          const headers = Array.isArray(body?.chats) ? body.chats : [];
+          const headerMap = new Map(headers.map((h) => [h.chat_id, h]));
+
+          // Keep only chats that still exist in DB headers for this user.
+          chats = chats
+            .filter((chat) => headerMap.has(chat.id))
+            .map((chat) => ({
+              ...chat,
+              title: headerMap.get(chat.id)?.title || chat.title,
+            }));
+
+          // Add server headers that are not yet in local cache.
+          headers.forEach((header) => {
+            if (!chats.some((chat) => chat.id === header.chat_id)) {
+              chats.push({
+                id: header.chat_id,
+                title: header.title || "Conversation",
+                messages: [],
+              });
+            }
+          });
+
+          chats.sort((a, b) => {
+            const aUpdated = headerMap.get(a.id)?.updated_at || headerMap.get(a.id)?.created_at || "";
+            const bUpdated = headerMap.get(b.id)?.updated_at || headerMap.get(b.id)?.created_at || "";
+            return bUpdated.localeCompare(aUpdated);
+          });
+
+          if (activeChatId && !chats.some((chat) => chat.id === activeChatId)) {
+            activeChatId = chats[0]?.id || null;
+          } else if (!activeChatId) {
+            activeChatId = chats[0]?.id || null;
+          }
+
+          saveChats(chats);
+          renderChats();
+          renderMessages();
+        } catch {
+          // Keep local fallback when server sync is temporarily unavailable.
+        }
+      };
+
       const hideChatContextMenu = () => {
         chatContextMenuEl.classList.remove("open");
         contextMenuChatId = null;
@@ -978,12 +1030,13 @@
         logEvent("error", "system", "unhandled_rejection", event.reason?.message || "Unhandled promise rejection");
       });
 
-      if (!chats.length) {
-        createChat();
-      } else {
-        renderChats();
-        renderMessages();
-      }
+      renderChats();
+      renderMessages();
+      syncChatsFromServer().finally(() => {
+        if (!chats.length) {
+          createChat();
+        }
+      });
     </script>
   </body>
 </html>

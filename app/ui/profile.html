@@ -262,6 +262,10 @@
 
     <script>
       const token = localStorage.getItem("adminToken");
+      if (!token) {
+        window.location.assign("/ui");
+      }
+
       const email = localStorage.getItem("adminEmail") || "Admin";
       const businessId = localStorage.getItem("adminBusinessId") || "-";
       const loginAt = localStorage.getItem("adminLoginAt") || "-";
