@@ -10,9 +10,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class TokenPayload:
-    def __init__(self, sub: str, business_id: str | None, role: str):
+    def __init__(self, sub: str, business_client_id: str | None, role: str):
         self.sub = sub
-        self.business_id = business_id
+        self.business_client_id = business_client_id
         self.role = role
 
 
@@ -20,12 +20,13 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def create_access_token(subject: str, business_id: str | None, role: str) -> str:
+def create_access_token(subject: str, business_client_id: str | None, role: str) -> str:
     settings = get_settings()
     expire = datetime.utcnow() + timedelta(minutes=settings.jwt_access_token_expire_minutes)
     to_encode: dict[str, Any] = {
         "sub": subject,
-        "business_id": business_id,
+        "business_client_id": business_client_id,
+        "business_id": business_client_id,
         "role": role,
         "exp": expire,
     }
@@ -45,6 +46,6 @@ def decode_token(token: str) -> TokenPayload:
     payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
     return TokenPayload(
         sub=payload.get("sub"),
-        business_id=payload.get("business_id"),
+        business_client_id=payload.get("business_client_id") or payload.get("business_id"),
         role=payload.get("role"),
     )

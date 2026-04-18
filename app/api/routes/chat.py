@@ -46,6 +46,7 @@ async def delete_chat_header(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> dict:
+    """Delete one chat thread header and its linked request and response records."""
     owner_user_id = admin.email
     owner_user_uuid = admin.id
     stmt = select(ChatHeader).where(
@@ -108,6 +109,7 @@ async def get_my_chat_headers(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> ChatHistoryResponse:
+    """List chat headers for the current user or fallback admin account."""
     owner_user_id = admin.email
     owner_user_uuid = admin.id
     stmt = (
@@ -131,6 +133,7 @@ async def get_user_chat_history(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(require_admin),
 ) -> ChatHistoryResponse:
+    """Fetch chat history for a specific user email identifier."""
     requested_owner = normalize_email(user_id)
     stmt = (
         select(ChatHeader)
@@ -160,6 +163,7 @@ async def generate_chat(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> ChatResponse:
+    """Generate a grounded answer for a user prompt using the indexed workspace knowledge base."""
     effective_user_id = admin.email
     effective_user_uuid = admin.id
     log_chat(
@@ -295,7 +299,7 @@ async def stream_chat(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> StreamingResponse:
-    """Stream chat tokens via Server-Sent Events (SSE). Each event is a JSON line.
+    """Stream a generated answer as server-sent events for live chat UIs.
 
     Token events:  ``data: {"token": "..."}``
     Done event:    ``data: {"type": "done", "sources": [...]}``

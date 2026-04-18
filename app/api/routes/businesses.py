@@ -29,6 +29,7 @@ async def create_business(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> BusinessOut:
+    """Create a new business tenant that can own workspaces, users, and documents."""
     _ensure_business_creator(admin)
     existing = (
         await session.execute(
@@ -54,6 +55,7 @@ async def list_businesses(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> list[BusinessOut]:
+    """List businesses available to the current account or fallback admin context."""
     if admin.role == "admin":
         stmt = select(Business).where(Business.admin_id == admin.id)
         return list((await session.execute(stmt)).scalars().all())
@@ -70,6 +72,7 @@ async def get_business(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> BusinessOut:
+    """Fetch the details of a single business by its public client identifier."""
     stmt = select(Business).where(Business.business_client_id == business_client_id)
     business = (await session.execute(stmt)).scalar_one_or_none()
     if not business:

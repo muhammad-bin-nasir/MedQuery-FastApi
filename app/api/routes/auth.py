@@ -18,6 +18,7 @@ router = APIRouter(prefix="/admin/auth", tags=["Admin Auth"])
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
 async def login(request: Request, payload: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
+    """Authenticate a user or admin and return an access token plus any resolved business/workspace scope."""
     business = None
     normalized_email = normalize_email(payload.email)
 
@@ -62,6 +63,7 @@ async def create_admin(
     request: CreateAdminRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Create a new admin account with global access to management features."""
     normalized_email = normalize_email(request.email)
     stmt = select(BusinessAdmin).where(BusinessAdmin.email_normalized == normalized_email)
     existing = (await session.execute(stmt)).scalar_one_or_none()
@@ -88,6 +90,7 @@ async def create_user(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(require_admin),
 ) -> dict:
+    """Create a workspace-scoped user under a business and assign the user role."""
     normalized_email = normalize_email(request.email)
 
     # Validate business exists

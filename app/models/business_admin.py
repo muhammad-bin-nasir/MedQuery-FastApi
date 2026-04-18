@@ -18,6 +18,7 @@ class BusinessAdmin(Base):
     business_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("businesses.id"), nullable=True
     )
+    business_client_id: Mapped[Optional[str]] = mapped_column(String(100), index=True, nullable=True)
     workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True
     )

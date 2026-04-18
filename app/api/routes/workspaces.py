@@ -36,6 +36,7 @@ async def create_workspace(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> WorkspaceOut:
+    """Create a new workspace inside a business and initialize its default configuration."""
     business = await _get_business(session, business_client_id)
     _ensure_access(admin, business)
     existing = (
@@ -67,6 +68,7 @@ async def list_workspaces(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> list[WorkspaceOut]:
+    """List all workspaces that belong to the specified business."""
     business = await _get_business(session, business_client_id)
     _ensure_access(admin, business)
     stmt = select(Workspace).where(Workspace.business_id == business.id)
@@ -80,6 +82,7 @@ async def get_workspace(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> WorkspaceOut:
+    """Return one workspace record by business and workspace identifier."""
     business = await _get_business(session, business_client_id)
     _ensure_access(admin, business)
     stmt = select(Workspace).where(
@@ -98,6 +101,7 @@ async def delete_workspace(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> dict:
+    """Delete a workspace and cascade its related documents and configuration."""
     business = await _get_business(session, business_client_id)
     _ensure_access(admin, business)
     stmt = select(Workspace).where(

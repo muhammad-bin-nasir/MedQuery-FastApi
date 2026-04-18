@@ -41,6 +41,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+OPENAPI_TAGS = [
+    {
+        "name": "Admin Auth",
+        "description": "Authentication and account management endpoints for admin and user creation.",
+    },
+    {
+        "name": "Businesses",
+        "description": "Create, list, and inspect business tenants used by the RAG system.",
+    },
+    {
+        "name": "Workspaces",
+        "description": "Manage workspaces that belong to a business and group related documents and settings.",
+    },
+    {
+        "name": "Workspace Config",
+        "description": "Read and update retrieval, embedding, and chat model configuration for a workspace.",
+    },
+    {
+        "name": "Documents",
+        "description": "Upload, inspect, reindex, cancel, reset, and browse documents and chunks for a workspace.",
+    },
+    {
+        "name": "RAG Retrieval",
+        "description": "Retrieve the most relevant indexed chunks for a user query in a workspace.",
+    },
+    {
+        "name": "Chat",
+        "description": "Generate answers, stream responses, and manage chat history for users and admins.",
+    },
+    {
+        "name": "System Config",
+        "description": "Read and update global system values such as the OpenAI API key.",
+    },
+    {
+        "name": "Health",
+        "description": "Basic health and uptime validation endpoints.",
+    },
+]
+
 
 def signal_handler(signum, frame):
     """Handle termination signals and log crash."""
@@ -90,8 +129,13 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
+    description=(
+        "MedQuery RAG API for business, workspace, document, retrieval, and chat management. "
+        "Use the grouped Swagger sections to explore admin setup, document ingestion, RAG retrieval, and chat generation flows."
+    ),
+    openapi_tags=OPENAPI_TAGS,
     openapi_url="/openapi.json",
-        docs_url=None,
+    docs_url=None,
     lifespan=lifespan,
 )
 app.state.limiter = limiter

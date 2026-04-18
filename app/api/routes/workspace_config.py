@@ -57,6 +57,7 @@ async def get_workspace_config(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> WorkspaceConfigOut:
+    """Read the active retrieval and chat configuration for a workspace."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business, workspace)
     stmt = select(WorkspaceConfig).where(WorkspaceConfig.workspace_id == workspace.id)
@@ -74,6 +75,7 @@ async def update_workspace_config(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> WorkspaceConfigOut:
+    """Update embedding, retrieval, and chat defaults for a workspace."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business, workspace)
     stmt = select(WorkspaceConfig).where(WorkspaceConfig.workspace_id == workspace.id)

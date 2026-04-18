@@ -15,6 +15,7 @@ class Workspace(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     business_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("businesses.id"))
+    business_client_id: Mapped[str] = mapped_column(String(100), index=True)
     workspace_id: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(255))
 

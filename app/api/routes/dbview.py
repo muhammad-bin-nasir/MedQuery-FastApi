@@ -11,6 +11,7 @@ router = APIRouter()
 
 @router.get("/db/overview")
 async def db_overview(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Return database metadata and row counts for the main public tables."""
     tables_result = await session.execute(
         text(
             """
@@ -57,6 +58,7 @@ async def db_overview(session: AsyncSession = Depends(get_session)) -> dict[str,
 async def db_table_detail(
     table_name: str, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """Return up to 50 rows plus column metadata for a single database table."""
     table_exists_result = await session.execute(
         text(
             """

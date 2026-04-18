@@ -464,6 +464,7 @@ async def reindex_document(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> dict:
+    """Rebuild the chunk and embedding index for a single document."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business)
     stmt = select(Document).where(
@@ -490,6 +491,7 @@ async def reindex_all(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> dict:
+    """Reindex every document in the selected workspace."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business)
     documents = (
@@ -517,6 +519,7 @@ async def list_documents(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> list[DocumentOut]:
+    """List documents in a workspace together with their chunk counts and status."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business)
     stmt = select(Document).where(
@@ -555,6 +558,7 @@ async def get_document(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> DocumentStatusResponse:
+    """Return the status and metadata for one uploaded document."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business)
     stmt = select(Document).where(
@@ -643,6 +647,7 @@ async def list_document_chunks(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> list[DocumentChunkOut]:
+    """Browse paginated chunks extracted from a document after ingestion."""
     business, workspace = await _get_workspace(session, business_client_id, workspace_id)
     _ensure_access(admin, business)
     stmt = (

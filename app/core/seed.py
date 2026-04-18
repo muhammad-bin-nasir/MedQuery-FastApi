@@ -1,19 +1,19 @@
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import ProgrammingError, OperationalError
 
 from app.core.security import get_password_hash, normalize_email
 from app.db.session import AsyncSessionLocal
-from app.models import Business, BusinessAdmin, Workspace, WorkspaceConfig
+from app.models import Business, BusinessAdmin, ChatHeader, ChatRequest, ChatResponse, Workspace, WorkspaceConfig
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BUSINESS_CLIENT_ID = "default"
 DEFAULT_BUSINESS_NAME = "Default Business"
-DEFAULT_ADMIN_EMAIL = "admin@example.com"
-DEFAULT_ADMIN_PASSWORD = "password"
+DEFAULT_ADMIN_EMAIL = "admin@admin.com"
+DEFAULT_ADMIN_PASSWORD = "admin@12345"
 DEFAULT_WORKSPACE_ID = "main"
 DEFAULT_WORKSPACE_NAME = "Main Workspace"
 
@@ -23,16 +23,10 @@ async def seed_initial_admin() -> None:
     try:
         normalized_default_admin_email = normalize_email(DEFAULT_ADMIN_EMAIL)
         async with AsyncSessionLocal() as session:
-            # ✅ Allow multiple admins in DB:
-            # Only skip seeding if the DEFAULT admin email already exists.
+            # Reset the user table to a single default admin account.
+            # This seed clears existing BusinessAdmin rows and removes stale business admin references.
             try:
-                existing_admin_id = (
-                    await session.execute(
-                        select(BusinessAdmin.id).where(
-                            BusinessAdmin.email_normalized == normalized_default_admin_email
-                        )
-                    )
-                ).scalar_one_or_none()
+                await session.execute(select(BusinessAdmin.id).limit(1))
             except (ProgrammingError, OperationalError) as e:
                 # Database tables don't exist yet - migrations need to be run
                 error_msg = str(e).lower()
@@ -45,9 +39,12 @@ async def seed_initial_admin() -> None:
                 # Re-raise if it's a different database error
                 raise
 
-            if existing_admin_id:
-                logger.info(f"Default admin ({DEFAULT_ADMIN_EMAIL}) already exists, skipping seed")
-                return
+            # Clear dependent chat data first, then reset the user table and business ownership.
+            await session.execute(delete(ChatResponse))
+            await session.execute(delete(ChatRequest))
+            await session.execute(delete(ChatHeader))
+            await session.execute(update(Business).values(admin_id=None))
+            await session.execute(delete(BusinessAdmin))
 
             # Ensure default business exists
             business = (
@@ -89,9 +86,12 @@ async def seed_initial_admin() -> None:
                 email=normalized_default_admin_email,
                 email_normalized=normalized_default_admin_email,
                 password_hash=get_password_hash(DEFAULT_ADMIN_PASSWORD),
-                role="super_admin",
+                role="admin",
             )
             session.add(admin)
+            await session.flush()
+            business.admin_id = admin.id
+            session.add(business)
             await session.commit()
             logger.info(
                 f"Seeded default admin: {DEFAULT_ADMIN_EMAIL} / {DEFAULT_ADMIN_PASSWORD} "

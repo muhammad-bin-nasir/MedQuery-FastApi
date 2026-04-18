@@ -27,7 +27,7 @@ async def get_openai_api_key_status_route(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> OpenAIApiKeyStatusOut:
-    """Return whether OpenAI API key is set and a masked preview (admin only)."""
+    """Return whether the OpenAI API key is configured and show a masked preview."""
     status = await get_openai_api_key_status(session)
     return OpenAIApiKeyStatusOut(set=status["set"], masked_key=status["masked_key"])
 
@@ -38,7 +38,7 @@ async def update_openai_api_key(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> dict:
-    """Set OpenAI API key in database (admin only)."""
+    """Save or replace the OpenAI API key used by chat and embedding features."""
     if not payload.value or not payload.value.strip():
         raise HTTPException(status_code=400, detail="Value cannot be empty")
     await set_openai_api_key(session, payload.value)

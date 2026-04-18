@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api"
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/medquery"
+    laravel_database_url: str | None = None
 
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"

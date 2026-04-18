@@ -19,6 +19,7 @@ async def retrieve(
     session: AsyncSession = Depends(get_session),
     admin: BusinessAdmin = Depends(get_current_admin),
 ) -> RetrievalResponse:
+    """Retrieve the most relevant chunks for a question within a business and workspace scope."""
     business = (
         await session.execute(
             select(Business).where(Business.business_client_id == payload.business_client_id)
