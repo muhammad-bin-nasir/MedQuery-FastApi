@@ -81,7 +81,12 @@ async def create_admin(
     )
     session.add(admin)
     await session.commit()
-    return {"status": "created"}
+    return {
+        "status": "created",
+        "user_id": str(admin.id),
+        "email": admin.email,
+        "role": admin.role,
+    }
 
 
 @router.post("/create-user")
@@ -131,4 +136,9 @@ async def create_user(
     )
     session.add(user)
     await session.commit()
-    return {"status": "created"}
+    return {
+        "status": "created",
+        "user_id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+    }
