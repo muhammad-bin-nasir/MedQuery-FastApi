@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 class BusinessCreate(BaseModel):
     business_client_id: str = Field(..., example="acme")
     name: str = Field(..., example="Acme Health")
+    admin_id: uuid.UUID | None = Field(
+        default=None,
+        description="Admin UUID creating/owning the business. If provided, it must match the authenticated admin.",
+    )
 
 
 class BusinessOut(BaseModel):

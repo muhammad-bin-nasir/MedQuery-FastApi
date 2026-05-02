@@ -81,7 +81,11 @@ async def update_workspace_config(
     stmt = select(WorkspaceConfig).where(WorkspaceConfig.workspace_id == workspace.id)
     config = (await session.execute(stmt)).scalar_one_or_none()
     if not config:
-        config = WorkspaceConfig(business_id=business.id, workspace_id=workspace.id)
+        config = WorkspaceConfig(
+            business_id=business.id,
+            business_client_id=business.business_client_id,
+            workspace_id=workspace.id,
+        )
         session.add(config)
     for key, value in payload.model_dump().items():
         setattr(config, key, value)

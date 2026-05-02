@@ -31,6 +31,10 @@ async def create_business(
 ) -> BusinessOut:
     """Create a new business tenant that can own workspaces, users, and documents."""
     _ensure_business_creator(admin)
+    owner_admin_id = payload.admin_id or admin.id
+    if owner_admin_id != admin.id:
+        raise HTTPException(status_code=403, detail="Business admin must match the authenticated creator")
+
     existing = (
         await session.execute(
             select(Business).where(Business.business_client_id == payload.business_client_id)
@@ -42,7 +46,7 @@ async def create_business(
     business = Business(
         business_client_id=payload.business_client_id,
         name=payload.name,
-        admin_id=admin.id,
+        admin_id=owner_admin_id,
     )
     session.add(business)
     await session.commit()
@@ -79,3 +83,21 @@ async def get_business(
         raise HTTPException(status_code=404, detail="Business not found")
     _ensure_business_access(admin, business)
     return business
+
+
+@router.delete("/{business_client_id}")
+async def delete_business(
+    business_client_id: str,
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> dict:
+    """Delete a business and cascade its related workspaces, users, and documents."""
+    stmt = select(Business).where(Business.business_client_id == business_client_id)
+    business = (await session.execute(stmt)).scalar_one_or_none()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    _ensure_business_access(admin, business)
+    await session.delete(business)
+    await session.commit()
+    return {"status": "deleted", "cascade": "workspaces_users_documents"}

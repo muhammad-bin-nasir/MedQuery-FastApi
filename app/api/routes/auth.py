@@ -70,6 +70,13 @@ async def create_admin(
     if existing:
         raise HTTPException(status_code=400, detail="User already exists")
 
+    existing_admin = (
+        await session.execute(
+            select(BusinessAdmin.id).where(BusinessAdmin.role.in_(["admin", "super_admin"])).limit(1)
+        )
+    ).scalar_one_or_none()
+    assigned_role = "super_admin" if existing_admin is None else "admin"
+
     admin = BusinessAdmin(
         id=uuid.uuid4(),
         business_id=None,
@@ -77,7 +84,7 @@ async def create_admin(
         email=normalized_email,
         email_normalized=normalized_email,
         password_hash=get_password_hash(request.password),
-        role="admin",
+        role=assigned_role,
     )
     session.add(admin)
     await session.commit()
@@ -142,3 +149,31 @@ async def create_user(
         "email": user.email,
         "role": user.role,
     }
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(require_admin),
+) -> dict:
+    """Delete a workspace-scoped user account by id."""
+    stmt = select(BusinessAdmin).where(BusinessAdmin.id == user_id)
+    target_user = (await session.execute(stmt)).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target_user.role != "user":
+        raise HTTPException(status_code=403, detail="Only workspace users can be deleted")
+
+    if admin.role == "admin":
+        if not target_user.business_id:
+            raise HTTPException(status_code=403, detail="Not allowed")
+        business_stmt = select(Business).where(Business.id == target_user.business_id)
+        business = (await session.execute(business_stmt)).scalar_one_or_none()
+        if not business or business.admin_id != admin.id:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+    await session.delete(target_user)
+    await session.commit()
+    return {"status": "deleted", "user_id": str(target_user.id)}

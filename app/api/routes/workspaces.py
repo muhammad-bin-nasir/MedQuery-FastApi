@@ -51,11 +51,18 @@ async def create_workspace(
         raise HTTPException(status_code=400, detail="Workspace already exists")
 
     workspace = Workspace(
-        business_id=business.id, workspace_id=payload.workspace_id, name=payload.name
+        business_id=business.id,
+        business_client_id=business.business_client_id,
+        workspace_id=payload.workspace_id,
+        name=payload.name,
     )
     session.add(workspace)
     await session.flush()
-    config = WorkspaceConfig(business_id=business.id, workspace_id=workspace.id)
+    config = WorkspaceConfig(
+        business_id=business.id,
+        business_client_id=business.business_client_id,
+        workspace_id=workspace.id,
+    )
     session.add(config)
     await session.commit()
     await session.refresh(workspace)

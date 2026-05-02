@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
@@ -29,7 +30,6 @@ from app.api.routes import (
 from app.core.config import get_settings
 from app.core.crash_logger import crash_logger
 from app.core.limiter import limiter
-from app.core.seed import seed_initial_admin
 
 settings = get_settings()
 
@@ -121,7 +121,6 @@ async def lifespan(_: FastAPI):
         crash_logger.write_progress("app_started", {"event": "startup"})
     except Exception as e:
         logger.warning(f"Could not init log dir: {e}")
-    await seed_initial_admin()
     logger.info("Application startup complete")
     yield
     logger.info("Application shutting down...")
@@ -140,6 +139,12 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect() -> RedirectResponse:
+    """Redirect root URL to the UI page."""
+    return RedirectResponse(url="/ui", status_code=307)
 
 
 @app.get("/docs", include_in_schema=False)

@@ -69,6 +69,7 @@ async def seed_initial_admin() -> None:
             if not existing_workspace:
                 workspace = Workspace(
                     business_id=business.id,
+                    business_client_id=business.business_client_id,
                     workspace_id=DEFAULT_WORKSPACE_ID,
                     name=DEFAULT_WORKSPACE_NAME,
                 )
@@ -76,6 +77,7 @@ async def seed_initial_admin() -> None:
                 await session.flush()
                 session.add(WorkspaceConfig(
                     business_id=business.id, 
+                    business_client_id=business.business_client_id,
                     workspace_id=workspace.id,
                     use_local_embeddings=False  # Default to ChatGPT API, can be changed via API
                 ))
