@@ -37,6 +37,11 @@ class ChatRequest(BaseModel):
     workspace_id: str = Field(..., example="main")
     user_id: str = Field(..., example="user@example.com")
     query: str = Field(..., example="User question here")
+    image_data_url: str | None = Field(
+        None,
+        example="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
+        description="Optional inline image as data URL for multimodal chat prompts.",
+    )
     chat_id: str | None = Field(None, example="f3f1893f-267e-4f7a-a012-4f84136f12de")
     chat_title: str | None = Field(None, example="Symptoms follow up")
     prompt_engineering: str | None = Field(

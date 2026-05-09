@@ -11,8 +11,24 @@ services:
     volumes:
       - pgvector_data:/var/lib/postgresql/data
 
+  mysql:
+    image: docker.io/library/mariadb:11
+    container_name: fastapi-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: test_app
+      MYSQL_USER: test_app_user
+      MYSQL_PASSWORD: test_app_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql:Z
+
   api:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_LOCAL_EMBEDDINGS: ${INSTALL_LOCAL_EMBEDDINGS:-false}
     container_name: medquery-api
     env_file:
       - .env
@@ -20,22 +36,29 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
+      - mysql
     # Keep under 4GB so we don't hit limit and get killed (app uses small batches to stay under ~3GB)
     mem_limit: 4g
     mem_reservation: 512m
     # Persist crash logs to host
     volumes:
-      - ./logs:/app/logs
+      - ./logs:/app/logs:Z
       # Mount code for live reloading (development) - comment out for production
-      - ./app:/app/app
-      - ./alembic.ini:/app/alembic.ini
-      - ./app/migrations:/app/app/migrations
+      - ./app:/app/app:Z
+      - ./alembic.ini:/app/alembic.ini:Z
+      - ./app/migrations:/app/app/migrations:Z
     environment:
       - PYTHONHASHSEED=0
       - MALLOC_ARENA_MAX=2
       # So crash/progress and ingestion logs go to mounted volume (visible on host)
       - CRASH_LOG_DIR=/app/logs/crashes
       - INGESTION_LOG_DIR=/app/logs
+      # Use polling for file-watcher on mounts that don't support inotify
+      - WATCHFILES_USE_POLLING=true
+      - LARAVEL_DATABASE_URL=mysql+pymysql://test_app_user:test_app_password@mysql:3306/test_app
+    # Run without the auto-reload watcher to avoid permission/watch errors on some mounts
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 volumes:
   pgvector_data:
+  mysql_data:

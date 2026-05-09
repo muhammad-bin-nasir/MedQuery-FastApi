@@ -308,6 +308,36 @@
         align-items: flex-end;
       }
 
+      .composer-tools {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .image-preview-wrap {
+        display: none;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .image-preview-wrap.open {
+        display: flex;
+      }
+
+      .image-preview {
+        width: 56px;
+        height: 56px;
+        object-fit: cover;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+      }
+
+      .image-preview-meta {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
       .composer textarea {
         flex: 1;
       }
@@ -446,6 +476,16 @@
             <div class="status" id="session-status">Ready.</div>
           </div>
           <div class="messages" id="messages"></div>
+          <div class="composer-tools">
+            <input id="image-upload" type="file" accept="image/*" hidden />
+            <button id="image-upload-btn" type="button" class="secondary-btn">Attach image</button>
+            <button id="image-clear-btn" type="button" class="secondary-btn" style="display: none;">Clear image</button>
+            <div class="status" id="image-status">No image attached.</div>
+          </div>
+          <div class="image-preview-wrap" id="image-preview-wrap">
+            <img id="image-preview" class="image-preview" alt="Selected image preview" />
+            <div class="image-preview-meta" id="image-preview-meta"></div>
+          </div>
           <div class="composer">
             <textarea id="input" placeholder="Type a prompt..."></textarea>
             <button id="send" type="button">Send</button>
@@ -478,6 +518,13 @@
       const newChatButton = document.getElementById("new-chat");
       const sendButton = document.getElementById("send");
       const inputEl = document.getElementById("input");
+      const imageUploadEl = document.getElementById("image-upload");
+      const imageUploadBtnEl = document.getElementById("image-upload-btn");
+      const imageClearBtnEl = document.getElementById("image-clear-btn");
+      const imageStatusEl = document.getElementById("image-status");
+      const imagePreviewWrapEl = document.getElementById("image-preview-wrap");
+      const imagePreviewEl = document.getElementById("image-preview");
+      const imagePreviewMetaEl = document.getElementById("image-preview-meta");
 
       const businessEl = document.getElementById("business");
       const workspaceEl = document.getElementById("workspace");
@@ -487,6 +534,78 @@
       const promptEl = document.getElementById("prompt");
       const overrideEl = document.getElementById("chat-override");
       const modeEl = document.getElementById("mode");
+
+      const IMAGE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+      let selectedImageDataUrl = null;
+      let selectedImageName = "";
+
+      const formatBytes = (bytes) => {
+        if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB"];
+        let value = bytes;
+        let unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+          value /= 1024;
+          unitIndex += 1;
+        }
+        return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+      };
+
+      const clearSelectedImage = () => {
+        selectedImageDataUrl = null;
+        selectedImageName = "";
+        imageUploadEl.value = "";
+        imagePreviewEl.removeAttribute("src");
+        imagePreviewWrapEl.classList.remove("open");
+        imageClearBtnEl.style.display = "none";
+        imagePreviewMetaEl.textContent = "";
+        setStatus(imageStatusEl, "No image attached.");
+      };
+
+      const readFileAsDataUrl = (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("Could not read selected file."));
+          reader.readAsDataURL(file);
+        });
+
+      const handleImageSelection = async () => {
+        const file = imageUploadEl.files && imageUploadEl.files[0];
+        if (!file) {
+          clearSelectedImage();
+          return;
+        }
+
+        if (!file.type.startsWith("image/")) {
+          clearSelectedImage();
+          setStatus(imageStatusEl, "Please choose a valid image file.", "error");
+          return;
+        }
+
+        if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
+          clearSelectedImage();
+          setStatus(imageStatusEl, "Image is too large. Max size is 5 MB.", "error");
+          return;
+        }
+
+        try {
+          const dataUrl = await readFileAsDataUrl(file);
+          if (!dataUrl.startsWith("data:image/")) {
+            throw new Error("Only image uploads are supported.");
+          }
+          selectedImageDataUrl = dataUrl;
+          selectedImageName = file.name || "image";
+          imagePreviewEl.src = dataUrl;
+          imagePreviewWrapEl.classList.add("open");
+          imageClearBtnEl.style.display = "inline-block";
+          imagePreviewMetaEl.textContent = `${selectedImageName} (${formatBytes(file.size)})`;
+          setStatus(imageStatusEl, "Image attached. It will be sent with your next chat prompt.", "success");
+        } catch (error) {
+          clearSelectedImage();
+          setStatus(imageStatusEl, error.message || "Could not process image.", "error");
+        }
+      };
 
       const buildHeaders = () => {
         const h = { "Content-Type": "application/json" };
@@ -893,6 +1012,7 @@
         return {
           ...basePayload,
           prompt_engineering: promptEl.value.trim(),
+          image_data_url: selectedImageDataUrl,
           chat_config_override: {
             temperature: parseFloat(temperatureEl.value || "0.2"),
             max_tokens: parseInt(maxTokensEl.value || "600", 10),
@@ -970,6 +1090,7 @@
             } else {
               appendMessage("assistant", JSON.stringify(responseBody, null, 2));
             }
+            clearSelectedImage();
             setStatus(sessionStatusEl, "Response received.", "success");
             setStatus(sendStatusEl, "", "success");
             logEvent("info", "chat", "chat_response_received");
@@ -1004,6 +1125,46 @@
           let buffer = "";
           let messageContent = "";
           let sources = [];
+          let streamError = null;
+
+          const handleSseDataLine = (line) => {
+            if (!line.startsWith("data: ")) return;
+
+            let eventData;
+            try {
+              eventData = JSON.parse(line.slice(6));
+            } catch {
+              // Ignore malformed lines instead of failing the whole stream.
+              return;
+            }
+
+            if (eventData.type === "error") {
+              streamError = new Error(eventData.message || "Streaming error");
+              return;
+            }
+
+            if (eventData.type === "done") {
+              sources = eventData.sources || [];
+              return;
+            }
+
+            if (eventData.type === "start") {
+              return;
+            }
+
+            // Support both app-native SSE ({token}) and OpenAI-like SSE shapes.
+            const tokenText =
+              eventData.token ||
+              eventData.delta ||
+              eventData.content ||
+              eventData?.choices?.[0]?.delta?.content ||
+              "";
+
+            if (tokenText) {
+              messageContent += tokenText;
+              updateLastMessage(messageContent);
+            }
+          };
 
           while (true) {
             const { done, value } = await reader.read();
@@ -1015,33 +1176,25 @@
 
             for (let i = 0; i < lines.length - 1; i++) {
               const line = lines[i].trim();
-              if (!line.startsWith("data: ")) continue;
-
-              try {
-                const eventData = JSON.parse(line.slice(6));
-
-                if (eventData.type === "error") {
-                  throw new Error(eventData.message || "Streaming error");
-                }
-
-                if (eventData.type === "done") {
-                  sources = eventData.sources || [];
-                  break;
-                }
-
-                if (eventData.type === "start") {
-                  continue;
-                }
-
-                if (eventData.token) {
-                  messageContent += eventData.token;
-                  updateLastMessage(messageContent);
-                }
-              } catch (parseErr) {
-                // Ignore parse errors for malformed SSE lines
-                continue;
+              handleSseDataLine(line);
+              if (streamError) {
+                break;
               }
             }
+
+            if (streamError) {
+              break;
+            }
+          }
+
+          // Process any final non-empty buffered line.
+          const tailLine = buffer.trim();
+          if (tailLine) {
+            handleSseDataLine(tailLine);
+          }
+
+          if (streamError) {
+            throw streamError;
           }
 
           // Finalize with sources if available
@@ -1054,6 +1207,7 @@
             updateLastMessage(messageContent);
           }
 
+          clearSelectedImage();
           setStatus(sessionStatusEl, "Response received.", "success");
           setStatus(sendStatusEl, "", "success");
           logEvent("info", "chat", "chat_response_received");
@@ -1067,6 +1221,9 @@
 
       newChatButton.addEventListener("click", createChat);
       sendButton.addEventListener("click", sendMessage);
+      imageUploadBtnEl.addEventListener("click", () => imageUploadEl.click());
+      imageUploadEl.addEventListener("change", handleImageSelection);
+      imageClearBtnEl.addEventListener("click", clearSelectedImage);
       inputEl.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           sendMessage();

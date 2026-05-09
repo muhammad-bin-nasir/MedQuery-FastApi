@@ -40,7 +40,7 @@ def _safe_value(v: Any) -> Any:
     return str(v)[:500]
 
 
-def log_chat(step: str, message: str, **details: Any) -> None:
+def log_chat(step_name: str, message: str, **details: Any) -> None:
     """
     Write one line to logs/chat.log: timestamp, step, message, details (JSON).
     Flush + fsync so nothing is lost on crash.
@@ -49,11 +49,17 @@ def log_chat(step: str, message: str, **details: Any) -> None:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         payload = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "step": step,
+            "step": step_name,
             "message": message,
         }
         for k, v in details.items():
-            if v is not None and k not in payload:
+            if v is None:
+                continue
+            # Preserve additional step metadata without overriding the event step.
+            if k == "step":
+                payload["step_detail"] = _safe_value(v)
+                continue
+            if k not in payload:
                 payload[k] = _safe_value(v)
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         with open(CHAT_LOG_FILE, "a", encoding="utf-8") as f:
@@ -71,7 +77,7 @@ def log_chat(step: str, message: str, **details: Any) -> None:
                         "timestamp": datetime.utcnow().isoformat() + "Z",
                         "step": "chat_log_error",
                         "message": str(e),
-                        "failed_step": step,
+                        "failed_step": step_name,
                     }, ensure_ascii=False) + "\n"
                 )
                 f.flush()

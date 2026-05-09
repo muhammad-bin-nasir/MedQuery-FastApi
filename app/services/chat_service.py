@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import re
 import uuid
@@ -15,6 +17,16 @@ from app.services.system_config_service import get_openai_api_key
 
 PROMPT_PREVIEW_MAX = 800
 ANSWER_PREVIEW_MAX = 500
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+ALLOWED_IMAGE_MIME_TYPES: frozenset[str] = frozenset({
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+})
+IMAGE_DATA_URL_RE = re.compile(
+    r"^data:(?P<mime>[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+);base64,(?P<data>[A-Za-z0-9+/=\s]+)$"
+)
 
 # ---------------------------------------------------------------------------
 # Medical / biological topic guard
@@ -70,6 +82,54 @@ def _is_medical_or_biological(query: str) -> bool:
     return bool(words & _MEDICAL_BIO_KEYWORDS)
 
 
+def _message_content_len(content: object) -> int:
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    total += len(str(item.get("text", "")))
+                    continue
+                if item.get("type") == "image_url":
+                    total += len(str((item.get("image_url") or {}).get("url", "")))
+                    continue
+            total += len(str(item))
+        return total
+    return len(str(content))
+
+
+def _validate_image_data_url(image_data_url: str | None) -> str | None:
+    if not image_data_url:
+        return None
+
+    value = image_data_url.strip()
+    if not value:
+        return None
+
+    match = IMAGE_DATA_URL_RE.match(value)
+    if not match:
+        raise ValueError("image_data_url must be a base64 data URL (data:image/<type>;base64,...).")
+
+    mime_type = match.group("mime").lower()
+    if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+        raise ValueError("Unsupported image type. Allowed: image/png, image/jpeg, image/webp, image/gif.")
+
+    encoded_data = re.sub(r"\s+", "", match.group("data"))
+    try:
+        decoded = base64.b64decode(encoded_data, validate=True)
+    except binascii.Error as exc:
+        raise ValueError("image_data_url contains invalid base64 data.") from exc
+
+    if len(decoded) > MAX_IMAGE_BYTES:
+        raise ValueError("Image is too large. Maximum allowed size is 5MB.")
+
+    return f"data:{mime_type};base64,{encoded_data}"
+
+
 class ChatService:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -84,6 +144,7 @@ class ChatService:
         user_uuid: uuid.UUID,
         chat_header: str | None,
         query: str,
+        image_data_url: str | None,
         prompt_engineering: str,
         config: WorkspaceConfig,
         override: dict | None = None,
@@ -186,9 +247,19 @@ class ChatService:
         context = "\n\n".join([chunk.content for chunk, _, _ in chunks])
         system_prompt = prompt_engineering
         user_content = f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
+        normalized_image_data_url = _validate_image_data_url(image_data_url)
+        user_message_content: str | list[dict]
+        if normalized_image_data_url:
+            user_message_content = [
+                {"type": "text", "text": user_content},
+                {"type": "image_url", "image_url": {"url": normalized_image_data_url}},
+            ]
+        else:
+            user_message_content = user_content
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": user_message_content},
         ]
         full_prompt_preview = f"[SYSTEM]\n{system_prompt[:PROMPT_PREVIEW_MAX]}{'...' if len(system_prompt) > PROMPT_PREVIEW_MAX else ''}\n[USER]\n{user_content[:PROMPT_PREVIEW_MAX]}{'...' if len(user_content) > PROMPT_PREVIEW_MAX else ''}"
         log_chat(
@@ -197,6 +268,7 @@ class ChatService:
             system_prompt_len=len(system_prompt),
             context_len=len(context),
             user_content_len=len(user_content),
+            image_attached=bool(normalized_image_data_url),
             prompt_preview=full_prompt_preview,
         )
 
@@ -218,7 +290,7 @@ class ChatService:
             max_tokens = config.chat_max_tokens_default
 
         try:
-            request_content_len = sum(len(m.get("content", "")) for m in messages)
+            request_content_len = sum(_message_content_len(m.get("content")) for m in messages)
             log_chat("CHAT_OPENAI_CALL", f"Calling ChatGPT API (model={model})", model=model, temperature=temperature, max_tokens=max_tokens, message_count=len(messages), request_content_len=request_content_len)
             response = await self._call_openai(messages, model, temperature, max_tokens, openai_api_key=openai_api_key)
         except Exception as e:
@@ -313,7 +385,7 @@ class ChatService:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        request_body_log = json.dumps({"model": model, "message_count": len(messages), "temperature": temperature, "max_tokens": max_tokens, "message_content_lens": [len(m.get("content", "")) for m in messages]}, ensure_ascii=False)
+        request_body_log = json.dumps({"model": model, "message_count": len(messages), "temperature": temperature, "max_tokens": max_tokens, "message_content_lens": [_message_content_len(m.get("content")) for m in messages]}, ensure_ascii=False)
         headers = {"Authorization": f"Bearer {key}"}
         try:
             async with httpx.AsyncClient(base_url=self.settings.openai_base_url, timeout=60) as client:
@@ -332,6 +404,10 @@ class ChatService:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as e:
                     log_chat("CHAT_ERROR", "OpenAI API returned error", step="openai_call", status_code=status_code, response_body=raw_response_text, error=str(e))
+                    if status_code == 401:
+                        raise RuntimeError(
+                            "OpenAI authentication failed (401). Please update the API key in System Configurations."
+                        ) from e
                     raise
                 try:
                     response_json = response.json()
@@ -370,7 +446,14 @@ class ChatService:
         token_count = 0
         async with httpx.AsyncClient(base_url=self.settings.openai_base_url, timeout=120) as client:
             async with client.stream("POST", "/chat/completions", json=payload, headers=headers) as response:
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    if response.status_code == 401:
+                        raise RuntimeError(
+                            "OpenAI authentication failed (401). Please update the API key in System Configurations."
+                        ) from e
+                    raise
                 buffer = ""
                 async for byte_chunk in response.aiter_bytes():
                     buffer += byte_chunk.decode("utf-8", errors="ignore")
@@ -406,6 +489,7 @@ class ChatService:
         chat_header: str | None,
         chat_title: str | None,
         query: str,
+        image_data_url: str | None,
         prompt_engineering: str,
         config: WorkspaceConfig,
         override: dict | None = None,
@@ -462,9 +546,19 @@ class ChatService:
         # ── Build prompt ───────────────────────────────────────────────────
         context = "\n\n".join([chunk.content for chunk, _, _ in chunks])
         user_content = f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
+        normalized_image_data_url = _validate_image_data_url(image_data_url)
+        user_message_content: str | list[dict]
+        if normalized_image_data_url:
+            user_message_content = [
+                {"type": "text", "text": user_content},
+                {"type": "image_url", "image_url": {"url": normalized_image_data_url}},
+            ]
+        else:
+            user_message_content = user_content
+
         messages = [
             {"role": "system", "content": prompt_engineering},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": user_message_content},
         ]
 
         # ── Resolve model params ───────────────────────────────────────────

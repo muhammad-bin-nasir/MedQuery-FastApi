@@ -25,6 +25,9 @@ class EmbeddingService:
         self.default_batch_size = 32
         self._local_model = None
 
+    def _supports_custom_dimensions(self, model: str) -> bool:
+        return model in {"text-embedding-3-small", "text-embedding-3-large"}
+
     def _get_local_model(self):
         """Lazy-load the local embedding model (only when use_local_embeddings=True)."""
         if self._local_model is None:
@@ -46,6 +49,9 @@ class EmbeddingService:
                 EMBEDDING_MODEL_DIMENSIONS.get("all-MiniLM-L6-v2", 384),
             )
             return dim
+        if self._supports_custom_dimensions(model):
+            # OpenAI text-embedding-3 models can be requested at a smaller output size.
+            return self.settings.vector_dimension
         return EMBEDDING_MODEL_DIMENSIONS.get(model, EMBEDDING_MODEL_DIMENSIONS[self.settings.default_embedding_model])
 
     def validate_dimension(self, model: str, use_local: bool | None = None) -> None:
@@ -67,6 +73,22 @@ class EmbeddingService:
         # Determine if we should use local embeddings: workspace config overrides global setting
         use_local_flag = use_local if use_local is not None else self.settings.use_local_embeddings
         key = openai_api_key or self.settings.openai_api_key
+
+        # Local embedding dependencies are optional in the default container image.
+        # Fall back to OpenAI embeddings when possible instead of hard-failing.
+        if use_local_flag and not HAS_SENTENCE_TRANSFORMERS:
+            if key:
+                logger.warning(
+                    "Local embeddings requested but sentence-transformers is not installed. "
+                    "Falling back to OpenAI embeddings."
+                )
+                use_local_flag = False
+            else:
+                raise RuntimeError(
+                    "Local embeddings requested but sentence-transformers is not installed, and OPENAI_API_KEY is missing. "
+                    "Install optional dependencies with requirements-local-embeddings.txt or configure OPENAI_API_KEY."
+                )
+
         self.validate_dimension(model, use_local=use_local_flag)
         if not texts:
             return []
@@ -150,6 +172,9 @@ class EmbeddingService:
         """Embed a single batch of texts."""
         key = openai_api_key or self.settings.openai_api_key
         payload = {"input": texts, "model": model}
+        if self._supports_custom_dimensions(model):
+            # Keep OpenAI embedding vectors aligned with pgvector column size.
+            payload["dimensions"] = self.settings.vector_dimension
         headers = {"Authorization": f"Bearer {key}"}
         
         # Optimize timeout based on batch size
@@ -167,8 +192,16 @@ class EmbeddingService:
                 response = await client.post("/embeddings", json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
+                embeddings = [item["embedding"] for item in data["data"]]
+                if embeddings:
+                    expected_dim = self.settings.vector_dimension
+                    actual_dim = len(embeddings[0])
+                    if actual_dim != expected_dim:
+                        raise RuntimeError(
+                            f"Embedding dimension mismatch: expected {expected_dim}, got {actual_dim} for model {model}."
+                        )
                 logger.info("Embedding batch complete: batch_size=%s response_count=%s", len(texts), len(data.get("data", [])))
-                return [item["embedding"] for item in data["data"]]
+                return embeddings
             except httpx.TimeoutException:
                 logger.error(f"Timeout embedding batch of {len(texts)} texts")
                 raise RuntimeError(f"Embedding request timed out. Try reducing chunk size or batch size.")

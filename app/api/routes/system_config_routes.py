@@ -41,5 +41,8 @@ async def update_openai_api_key(
     """Save or replace the OpenAI API key used by chat and embedding features."""
     if not payload.value or not payload.value.strip():
         raise HTTPException(status_code=400, detail="Value cannot be empty")
-    await set_openai_api_key(session, payload.value)
+    try:
+        await set_openai_api_key(session, payload.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", "message": "OpenAI API key saved."}

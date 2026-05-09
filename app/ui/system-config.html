@@ -264,6 +264,7 @@
       const openaiKeyInput = document.getElementById("openai-api-key");
       const openaiKeyStatus = document.getElementById("openai-key-status");
       const saveOpenaiKeyBtn = document.getElementById("save-openai-key");
+      let hasStoredOpenaiKey = false;
 
       businessInput.value = defaults.businessClientId || localStorage.getItem("adminBusinessId") || "";
       workspaceInput.value = defaults.workspaceId || "";
@@ -280,11 +281,15 @@
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.set) {
-            openaiKeyInput.value = data.masked_key || "(saved)";
+            hasStoredOpenaiKey = true;
+            openaiKeyInput.value = "";
+            openaiKeyInput.placeholder = data.masked_key ? `Saved: ${data.masked_key}` : "Saved key (enter new key to replace)";
             openaiKeyStatus.textContent = "Key saved. Enter a new value and Save to replace.";
             openaiKeyStatus.className = "status success";
           } else if (res.ok) {
+            hasStoredOpenaiKey = false;
             openaiKeyInput.value = "";
+            openaiKeyInput.placeholder = "sk-proj-...";
             openaiKeyStatus.textContent = "No API key set. Add one for Chat and RAG.";
             openaiKeyStatus.className = "status";
           } else {
@@ -351,7 +356,15 @@
       saveOpenaiKeyBtn.addEventListener("click", async () => {
         const value = openaiKeyInput.value.trim();
         if (!value) {
+          if (hasStoredOpenaiKey) {
+            setStatus(openaiKeyStatus, "A key is already saved. Enter a new full key only if you want to replace it.", "");
+            return;
+          }
           setStatus(openaiKeyStatus, "Enter an API key.", "error");
+          return;
+        }
+        if (value.includes("...") || value === "(saved)" || value === "(set)") {
+          setStatus(openaiKeyStatus, "Please paste the full API key, not a masked value.", "error");
           return;
         }
         if (!token) {

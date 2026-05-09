@@ -1,4 +1,6 @@
-# Install only when using USE_LOCAL_EMBEDDINGS=true.
-# Adds sentence-transformers (and PyTorch); large download, use after base image is built.
--r requirements.txt
+# Install only when using local embeddings.
+# This file is intentionally separate so base Docker builds stay fast.
+# CPU-only torch avoids downloading large CUDA dependency stacks.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu ; platform_system == "Linux"
 sentence-transformers>=2.2.0
