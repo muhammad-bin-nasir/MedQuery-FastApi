@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -290,6 +290,146 @@ async def generate_chat(
     except Exception as e:
         log_chat("CHAT_ERROR", "Chat generate failed", step="generate", error=str(e), error_type=type(e).__name__)
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+@router.post("/voice-generate")
+@limiter.limit("20/minute", key_func=get_user_key)
+async def generate_voice_chat(
+    request: Request,
+    business_client_id: str = Form(...),
+    workspace_id: str = Form(...),
+    user_id: str = Form(...),
+    audio_file: UploadFile = File(...),
+    chat_id: str | None = Form(default=None),
+    chat_title: str | None = Form(default=None),
+    prompt_engineering: str | None = Form(default=None),
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> dict:
+    """Accept audio, transcribe it, then run the normal chat generation flow using the transcript."""
+    effective_user_id = admin.email
+    effective_user_uuid = admin.id
+    normalized_business_client_id = (business_client_id or "").strip()
+    normalized_workspace_id = (workspace_id or "").strip()
+
+    if not normalized_business_client_id or not normalized_workspace_id:
+        raise HTTPException(status_code=422, detail="business_client_id and workspace_id are required")
+
+    log_chat(
+        "CHAT_VOICE_REQUEST_RECEIVED",
+        "Chat /voice-generate request received",
+        business_client_id=normalized_business_client_id,
+        workspace_id=normalized_workspace_id,
+        user_id=effective_user_id,
+        audio_content_type=audio_file.content_type,
+        audio_filename=audio_file.filename,
+    )
+
+    try:
+        business = (
+            await session.execute(
+                select(Business).where(Business.business_client_id == normalized_business_client_id)
+            )
+        ).scalar_one_or_none()
+        if not business:
+            log_chat("CHAT_ERROR", "Business not found", step="business_lookup", business_client_id=normalized_business_client_id)
+            raise HTTPException(status_code=404, detail="Business not found")
+        if admin.role == "admin" and business.admin_id != admin.id:
+            log_chat("CHAT_ERROR", "Admin not owner of business", step="business_access", business_id=str(business.id))
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+        workspace = (
+            await session.execute(
+                select(Workspace).where(
+                    Workspace.business_id == business.id,
+                    Workspace.workspace_id == normalized_workspace_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not workspace:
+            log_chat("CHAT_ERROR", "Workspace not found", step="workspace_lookup", workspace_id=normalized_workspace_id)
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        ensure_rag_access(admin, business_id=business.id, workspace_id=workspace.id)
+
+        config = (
+            await session.execute(
+                select(WorkspaceConfig).where(WorkspaceConfig.workspace_id == workspace.id)
+            )
+        ).scalar_one_or_none()
+        if not config:
+            log_chat("CHAT_ERROR", "Workspace config not found", step="config_lookup", workspace_id=str(workspace.id))
+            raise HTTPException(status_code=404, detail="Workspace config not found. Create or seed config for this workspace.")
+
+        config_prompt = (getattr(config, "prompt_engineering", None) or "").strip()
+        effective_prompt_engineering = (
+            config_prompt
+            or (prompt_engineering or "").strip()
+            or "You are a medical assistant. Provide concise answers based on the context."
+        )
+
+        service = ChatService()
+        transcript = await service.transcribe_audio(audio_file=audio_file, session=session)
+
+        answer, sources, usage = await service.generate_response(
+            session=session,
+            business_id=business.id,
+            workspace_id=workspace.id,
+            user_id=effective_user_id,
+            user_uuid=effective_user_uuid,
+            chat_header=chat_id,
+            query=transcript,
+            image_data_url=None,
+            prompt_engineering=effective_prompt_engineering,
+            config=config,
+            override=None,
+        )
+
+        if chat_id:
+            header_stmt = select(ChatHeader).where(
+                ChatHeader.owner_user_uuid == effective_user_uuid,
+                ChatHeader.business_id == business.id,
+                ChatHeader.workspace_id == workspace.id,
+                ChatHeader.chat_id == chat_id,
+            )
+            header = (await session.execute(header_stmt)).scalar_one_or_none()
+            fallback_title = transcript.split("\n", 1)[0][:80] or "New chat"
+            title = (chat_title or "").strip() or fallback_title
+
+            if header:
+                header.title = title
+            else:
+                session.add(
+                    ChatHeader(
+                        owner_user_id=effective_user_id,
+                        owner_user_uuid=effective_user_uuid,
+                        business_id=business.id,
+                        workspace_id=workspace.id,
+                        chat_id=chat_id,
+                        title=title,
+                    )
+                )
+            await session.commit()
+
+        return {
+            "business_client_id": normalized_business_client_id,
+            "workspace_id": normalized_workspace_id,
+            "user_id": effective_user_id,
+            "query": transcript,
+            "answer": answer,
+            "sources": sources,
+            "usage": {
+                "model": usage.get("model", config.chat_model_default),
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+            "transcript": transcript,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_chat("CHAT_ERROR", "Voice chat generate failed", step="voice_generate", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail=f"Voice chat failed: {str(e)}")
 
 
 @router.post("/stream")

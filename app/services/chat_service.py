@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncGenerator
 
 import httpx
+from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.chat_logger import log_chat
@@ -18,11 +19,25 @@ from app.services.system_config_service import get_openai_api_key
 PROMPT_PREVIEW_MAX = 800
 ANSWER_PREVIEW_MAX = 500
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_AUDIO_BYTES = 15 * 1024 * 1024
+DEFAULT_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
 ALLOWED_IMAGE_MIME_TYPES: frozenset[str] = frozenset({
     "image/png",
     "image/jpeg",
     "image/webp",
     "image/gif",
+})
+ALLOWED_AUDIO_MIME_TYPES: frozenset[str] = frozenset({
+    "audio/webm",
+    "video/webm",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/m4a",
+    "audio/ogg",
 })
 IMAGE_DATA_URL_RE = re.compile(
     r"^data:(?P<mime>[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+);base64,(?P<data>[A-Za-z0-9+/=\s]+)$"
@@ -421,6 +436,96 @@ class ChatService:
         except Exception as e:
             log_chat("CHAT_ERROR", "OpenAI request failed (network/timeout/other)", step="openai_call", error=str(e), error_type=type(e).__name__)
             raise
+
+    async def transcribe_audio(
+        self,
+        audio_file: UploadFile,
+        openai_api_key: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> str:
+        """Transcribe uploaded audio and return normalized transcript text."""
+        if audio_file is None:
+            raise ValueError("audio_file is required.")
+
+        filename = (audio_file.filename or "voice-note.webm").strip() or "voice-note.webm"
+        raw_content_type = (audio_file.content_type or "").lower().strip()
+        content_type = raw_content_type.split(";", 1)[0].strip()
+
+        # Browsers/proxies may classify webm audio as video/webm or octet-stream.
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        guessed_content_type = {
+            "webm": "audio/webm",
+            "wav": "audio/wav",
+            "mp3": "audio/mpeg",
+            "mpeg": "audio/mpeg",
+            "mp4": "audio/mp4",
+            "m4a": "audio/m4a",
+            "ogg": "audio/ogg",
+        }.get(ext)
+
+        if content_type in {"", "application/octet-stream"} and guessed_content_type:
+            content_type = guessed_content_type
+
+        if content_type and content_type not in ALLOWED_AUDIO_MIME_TYPES:
+            allowed = ", ".join(sorted(ALLOWED_AUDIO_MIME_TYPES))
+            raise ValueError(f"Unsupported audio type. Allowed: {allowed}.")
+
+        raw_audio = await audio_file.read(MAX_AUDIO_BYTES + 1)
+        if not raw_audio:
+            raise ValueError("audio_file is empty.")
+        if len(raw_audio) > MAX_AUDIO_BYTES:
+            raise ValueError("Audio file is too large. Maximum allowed size is 15MB.")
+
+        db_key = await get_openai_api_key(session) if session is not None else None
+        key = ((openai_api_key or db_key or self.settings.openai_api_key) or "").strip()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY not configured. Set it in System configurations.")
+
+        files = {
+            "file": (filename, raw_audio, content_type or "application/octet-stream"),
+        }
+        data = {
+            "model": DEFAULT_TRANSCRIPTION_MODEL,
+        }
+        headers = {"Authorization": f"Bearer {key}"}
+
+        try:
+            async with httpx.AsyncClient(base_url=self.settings.openai_base_url, timeout=120) as client:
+                response = await client.post("/audio/transcriptions", data=data, files=files, headers=headers)
+                raw_response_text = response.text or ""
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    log_chat(
+                        "CHAT_ERROR",
+                        "OpenAI transcription API returned error",
+                        step="transcription",
+                        status_code=response.status_code,
+                        response_body=raw_response_text,
+                        error=str(e),
+                    )
+                    raise
+
+                payload = response.json()
+        except Exception as e:
+            log_chat("CHAT_ERROR", "Audio transcription failed", step="transcription", error=str(e), error_type=type(e).__name__)
+            raise
+
+        transcript = str(payload.get("text", "")).strip()
+        if not transcript:
+            raise RuntimeError("Transcription completed but returned empty text.")
+
+        log_chat(
+            "CHAT_AUDIO_TRANSCRIBED",
+            "Audio transcription completed",
+            filename=filename,
+            content_type=content_type,
+            raw_content_type=raw_content_type,
+            audio_size_bytes=len(raw_audio),
+            transcript_len=len(transcript),
+            transcript_preview=transcript[:300],
+        )
+        return transcript
 
     async def _call_openai_stream(
         self,
