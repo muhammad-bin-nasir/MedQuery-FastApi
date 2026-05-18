@@ -89,3 +89,16 @@ class ChatHistoryResponse(BaseModel):
     user_id: str
     count: int
     chats: list[ChatHistoryItem]
+
+
+class ChatThreadMessage(BaseModel):
+    role: str
+    content: str
+    timestamp: str
+
+
+class ChatThreadResponse(BaseModel):
+    chat_id: str
+    title: str
+    user_id: str
+    messages: list[ChatThreadMessage]

@@ -15,6 +15,7 @@ class TokenResponse(BaseModel):
 
 
 class CreateAdminRequest(BaseModel):
+    username: str | None = Field(default=None, example="Admin Name")
     email: EmailStr = Field(..., example="admin@acme.com")
     password: str = Field(..., example="secret")
 

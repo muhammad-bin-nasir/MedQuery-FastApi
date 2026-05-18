@@ -3,6 +3,7 @@ import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import NoResultFound
@@ -21,10 +22,26 @@ from app.models import (
     Workspace,
     WorkspaceConfig,
 )
-from app.schemas.rag import ChatHistoryItem, ChatHistoryResponse, ChatRequest, ChatResponse, ChatUsage
+from app.schemas.rag import (
+    ChatHistoryItem,
+    ChatHistoryResponse,
+    ChatRequest,
+    ChatResponse,
+    ChatThreadMessage,
+    ChatThreadResponse,
+    ChatUsage,
+)
 from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+class ChatHeaderCreateRequest(BaseModel):
+    business_client_id: str
+    workspace_id: str
+    user_id: str
+    chat_id: str
+    chat_title: str | None = None
 
 
 def _map_chat_headers(headers: list[ChatHeader]) -> list[ChatHistoryItem]:
@@ -38,6 +55,40 @@ def _map_chat_headers(headers: list[ChatHeader]) -> list[ChatHistoryItem]:
         )
         for header in headers
     ]
+
+
+async def _resolve_chat_scope(
+    session: AsyncSession,
+    admin: BusinessAdmin,
+    business_client_id: str,
+    workspace_id: str,
+) -> tuple[Business, Workspace]:
+    business = (
+        await session.execute(
+            select(Business).where(Business.business_client_id == business_client_id)
+        )
+    ).scalar_one_or_none()
+    if not business:
+        log_chat("CHAT_ERROR", "Business not found", step="business_lookup", business_client_id=business_client_id)
+        raise HTTPException(status_code=404, detail="Business not found")
+    if admin.role == "admin" and business.admin_id != admin.id:
+        log_chat("CHAT_ERROR", "Admin not owner of business", step="business_access", business_id=str(business.id))
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    workspace = (
+        await session.execute(
+            select(Workspace).where(
+                Workspace.business_id == business.id,
+                Workspace.workspace_id == workspace_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not workspace:
+        log_chat("CHAT_ERROR", "Workspace not found", step="workspace_lookup", workspace_id=workspace_id)
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    ensure_rag_access(admin, business_id=business.id, workspace_id=workspace.id)
+    return business, workspace
 
 
 @router.delete("/headers/{chat_id}")
@@ -125,6 +176,134 @@ async def get_my_chat_headers(
     headers = (await session.execute(stmt)).scalars().all()
     chats = _map_chat_headers(headers)
     return ChatHistoryResponse(user_id=owner_user_id, count=len(chats), chats=chats)
+
+
+@router.get("/threads/{chat_id}", response_model=ChatThreadResponse)
+async def get_chat_thread(
+    chat_id: str,
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> ChatThreadResponse:
+    """Return a full chat conversation for the current user."""
+    owner_user_id = admin.email
+    owner_user_uuid = admin.id
+
+    header_stmt = select(ChatHeader).where(
+        or_(
+            ChatHeader.owner_user_uuid == owner_user_uuid,
+            and_(ChatHeader.owner_user_uuid.is_(None), ChatHeader.owner_user_id == owner_user_id),
+        ),
+        ChatHeader.chat_id == chat_id,
+    )
+    header = (await session.execute(header_stmt)).scalar_one_or_none()
+    if not header:
+        raise HTTPException(status_code=404, detail="Chat header not found")
+
+    thread_stmt = (
+        select(ChatRequestModel, ChatResponseModel)
+        .outerjoin(ChatResponseModel, ChatResponseModel.request_id == ChatRequestModel.id)
+        .where(
+            or_(
+                ChatRequestModel.user_uuid == owner_user_uuid,
+                and_(ChatRequestModel.user_uuid.is_(None), ChatRequestModel.user_id == owner_user_id),
+            ),
+            ChatRequestModel.business_id == header.business_id,
+            ChatRequestModel.workspace_id == header.workspace_id,
+            ChatRequestModel.chat_header == chat_id,
+        )
+        .order_by(ChatRequestModel.created_at.asc())
+    )
+    rows = (await session.execute(thread_stmt)).all()
+
+    messages: list[ChatThreadMessage] = []
+    for request_row, response_row in rows:
+        messages.append(ChatThreadMessage(
+            role="user",
+            content=request_row.query_text,
+            timestamp=request_row.created_at.isoformat(),
+        ))
+        if response_row:
+            messages.append(ChatThreadMessage(
+                role="assistant",
+                content=response_row.answer_text,
+                timestamp=(response_row.created_at or request_row.created_at).isoformat(),
+            ))
+
+    log_chat(
+        "CHAT_THREAD_FETCHED",
+        "Chat thread fetched",
+        chat_id=chat_id,
+        owner_user_id=owner_user_id,
+        requester_admin_id=str(admin.id),
+        requester_role=admin.role,
+        message_count=len(messages),
+    )
+
+    return ChatThreadResponse(
+        chat_id=header.chat_id,
+        title=header.title,
+        user_id=header.owner_user_id or owner_user_id,
+        messages=messages,
+    )
+
+
+@router.post("/headers", response_model=ChatHistoryItem, status_code=201)
+async def create_chat_header(
+    payload: ChatHeaderCreateRequest,
+    session: AsyncSession = Depends(get_session),
+    admin: BusinessAdmin = Depends(get_current_admin),
+) -> ChatHistoryItem:
+    """Create or refresh a chat header when a new chat starts."""
+    business_client_id = (payload.business_client_id or "").strip()
+    workspace_id = (payload.workspace_id or "").strip()
+    chat_id = (payload.chat_id or "").strip()
+    user_id = normalize_email(payload.user_id)
+
+    if not business_client_id or not workspace_id or not chat_id or not user_id:
+        raise HTTPException(status_code=422, detail="business_client_id, workspace_id, user_id, and chat_id are required")
+
+    log_chat(
+        "CHAT_HEADER_CREATE_REQUEST_RECEIVED",
+        "Chat /headers request received",
+        business_client_id=business_client_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        chat_id=chat_id,
+    )
+
+    business, workspace = await _resolve_chat_scope(session, admin, business_client_id, workspace_id)
+
+    title = (payload.chat_title or "").strip() or "New chat"
+
+    stmt = select(ChatHeader).where(
+        ChatHeader.owner_user_uuid == admin.id,
+        ChatHeader.business_id == business.id,
+        ChatHeader.workspace_id == workspace.id,
+        ChatHeader.chat_id == chat_id,
+    )
+    header = (await session.execute(stmt)).scalar_one_or_none()
+    if header:
+        header.title = title
+    else:
+        session.add(ChatHeader(
+            owner_user_id=user_id,
+            owner_user_uuid=admin.id,
+            business_id=business.id,
+            workspace_id=workspace.id,
+            chat_id=chat_id,
+            title=title,
+        ))
+
+    await session.commit()
+
+    refreshed = (await session.execute(stmt)).scalar_one()
+    return ChatHistoryItem(
+        chat_id=refreshed.chat_id,
+        title=refreshed.title,
+        user_id=refreshed.owner_user_id or "",
+        created_at=refreshed.created_at.isoformat(),
+        updated_at=refreshed.updated_at.isoformat() if refreshed.updated_at else None,
+    )
 
 
 @router.get("/history/{user_id}", response_model=ChatHistoryResponse)

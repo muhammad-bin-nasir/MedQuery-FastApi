@@ -85,10 +85,25 @@ _MEDICAL_BIO_KEYWORDS: frozenset[str] = frozenset({
 })
 
 _NO_RAG_ANSWER = (
+    "Not found in RAG. "
     "I'm sorry, I couldn't find an answer to your question in the available knowledge base. "
     "Medical and biological questions can only be answered using the uploaded documents, "
     "and no relevant information was found for your query."
 )
+
+
+def _build_system_prompt(prompt_engineering: str) -> str:
+    base_prompt = prompt_engineering.strip()
+    fallback_instruction = (
+        'If the provided context does not directly answer the question, start your response with '
+        '"Not found in RAG" and then answer '
+        'as helpfully as you can while staying consistent with the available context.'
+    )
+
+    if not base_prompt:
+        return fallback_instruction
+
+    return base_prompt + "\n\n" + fallback_instruction
 
 
 def _is_medical_or_biological(query: str) -> bool:
@@ -260,7 +275,7 @@ class ChatService:
             return _NO_RAG_ANSWER, [], {}
 
         context = "\n\n".join([chunk.content for chunk, _, _ in chunks])
-        system_prompt = prompt_engineering
+        system_prompt = _build_system_prompt(prompt_engineering)
         user_content = f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
         normalized_image_data_url = _validate_image_data_url(image_data_url)
         user_message_content: str | list[dict]
@@ -662,7 +677,7 @@ class ChatService:
             user_message_content = user_content
 
         messages = [
-            {"role": "system", "content": prompt_engineering},
+            {"role": "system", "content": _build_system_prompt(prompt_engineering)},
             {"role": "user", "content": user_message_content},
         ]
 
