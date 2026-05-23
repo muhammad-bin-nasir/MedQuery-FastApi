@@ -25,3 +25,9 @@ class CreateUserRequest(BaseModel):
     workspace_id: str = Field(..., example="main")
     email: EmailStr = Field(..., example="user@acme.com")
     password: str = Field(..., example="secret")
+
+
+class UserSelfSignupRequest(BaseModel):
+    username: str | None = Field(default=None, example="John Doe")
+    email: EmailStr = Field(..., example="user@example.com")
+    password: str = Field(..., example="secret")

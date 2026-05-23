@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BUSINESS_CLIENT_ID = "default"
 DEFAULT_BUSINESS_NAME = "Default Business"
+DEFAULT_USER_BUSINESS_CLIENT_ID = "default"
+DEFAULT_USER_BUSINESS_NAME = "Default"
+DEFAULT_USER_WORKSPACE_ID = "default"
+DEFAULT_USER_WORKSPACE_NAME = "Default"
 DEFAULT_ADMIN_EMAIL = "admin@admin.com"
 DEFAULT_ADMIN_PASSWORD = "admin@12345"
 DEFAULT_WORKSPACE_ID = "main"
@@ -103,3 +107,75 @@ async def seed_initial_admin() -> None:
         logger.error(f"Error during seed_initial_admin: {type(e).__name__}: {e}", exc_info=True)
         # Don't crash the app if seeding fails - just log the error
         # This allows the app to start even if seeding fails
+
+
+async def ensure_default_user_tenant() -> None:
+    """Idempotently create the 'default' business and 'default' workspace used for self-registered users.
+
+    This function never deletes or modifies existing data – it only creates
+    the business / workspace / config rows if they are missing.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            try:
+                await session.execute(select(Business.id).limit(1))
+            except (ProgrammingError, OperationalError) as e:
+                error_msg = str(e).lower()
+                if "does not exist" in error_msg or "relation" in error_msg:
+                    logger.warning("Database tables not found – skipping ensure_default_user_tenant.")
+                    return
+                raise
+
+            business = (
+                await session.execute(
+                    select(Business).where(Business.business_client_id == DEFAULT_USER_BUSINESS_CLIENT_ID)
+                )
+            ).scalar_one_or_none()
+
+            if not business:
+                business = Business(
+                    business_client_id=DEFAULT_USER_BUSINESS_CLIENT_ID,
+                    name=DEFAULT_USER_BUSINESS_NAME,
+                )
+                session.add(business)
+                await session.flush()
+                logger.info(f"Created default user business: {DEFAULT_USER_BUSINESS_CLIENT_ID}")
+
+            workspace = (
+                await session.execute(
+                    select(Workspace).where(
+                        Workspace.business_id == business.id,
+                        Workspace.workspace_id == DEFAULT_USER_WORKSPACE_ID,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if not workspace:
+                workspace = Workspace(
+                    business_id=business.id,
+                    business_client_id=business.business_client_id,
+                    workspace_id=DEFAULT_USER_WORKSPACE_ID,
+                    name=DEFAULT_USER_WORKSPACE_NAME,
+                )
+                session.add(workspace)
+                await session.flush()
+                logger.info(f"Created default user workspace: {DEFAULT_USER_WORKSPACE_ID}")
+
+            existing_config = (
+                await session.execute(
+                    select(WorkspaceConfig).where(WorkspaceConfig.workspace_id == workspace.id)
+                )
+            ).scalar_one_or_none()
+
+            if not existing_config:
+                session.add(WorkspaceConfig(
+                    business_id=business.id,
+                    business_client_id=business.business_client_id,
+                    workspace_id=workspace.id,
+                    use_local_embeddings=False,
+                ))
+                logger.info("Created WorkspaceConfig for default user workspace")
+
+            await session.commit()
+    except Exception as e:
+        logger.error(f"Error during ensure_default_user_tenant: {type(e).__name__}: {e}", exc_info=True)

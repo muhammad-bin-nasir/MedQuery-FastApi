@@ -10,7 +10,7 @@ from app.core.security import create_access_token, get_password_hash, normalize_
 from app.db.session import get_session
 from app.models import Business, BusinessAdmin, Workspace
 from app.schemas.auth import CreateAdminRequest, LoginRequest, TokenResponse
-from app.schemas.auth import CreateUserRequest
+from app.schemas.auth import CreateUserRequest, UserSelfSignupRequest
 
 router = APIRouter(prefix="/admin/auth", tags=["Admin Auth"])
 
@@ -93,6 +93,57 @@ async def create_admin(
         "user_id": str(admin.id),
         "email": admin.email,
         "role": admin.role,
+    }
+
+
+@router.post("/user-signup")
+async def user_self_signup(
+    request: UserSelfSignupRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Public self-registration endpoint. Assigns the new user to the default business and workspace."""
+    from app.core.seed import DEFAULT_USER_BUSINESS_CLIENT_ID, DEFAULT_USER_WORKSPACE_ID
+
+    normalized_email = normalize_email(request.email)
+
+    business_stmt = select(Business).where(Business.business_client_id == DEFAULT_USER_BUSINESS_CLIENT_ID)
+    business = (await session.execute(business_stmt)).scalar_one_or_none()
+    if not business:
+        raise HTTPException(status_code=503, detail="Default tenant not configured. Please contact support.")
+
+    workspace_stmt = select(Workspace).where(
+        Workspace.business_id == business.id,
+        Workspace.workspace_id == DEFAULT_USER_WORKSPACE_ID,
+    )
+    workspace = (await session.execute(workspace_stmt)).scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=503, detail="Default workspace not configured. Please contact support.")
+
+    existing_stmt = select(BusinessAdmin).where(
+        BusinessAdmin.business_id == business.id,
+        BusinessAdmin.email_normalized == normalized_email,
+    )
+    if (await session.execute(existing_stmt)).scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    user = BusinessAdmin(
+        id=uuid.uuid4(),
+        business_id=business.id,
+        workspace_id=workspace.id,
+        email=normalized_email,
+        email_normalized=normalized_email,
+        password_hash=get_password_hash(request.password),
+        role="user",
+    )
+    session.add(user)
+    await session.commit()
+    return {
+        "status": "created",
+        "user_id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "business_client_id": business.business_client_id,
+        "workspace_id": workspace.workspace_id,
     }
 
 

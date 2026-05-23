@@ -121,6 +121,10 @@ async def lifespan(_: FastAPI):
         crash_logger.write_progress("app_started", {"event": "startup"})
     except Exception as e:
         logger.warning(f"Could not init log dir: {e}")
+
+    from app.core.seed import ensure_default_user_tenant
+    await ensure_default_user_tenant()
+
     logger.info("Application startup complete")
     yield
     logger.info("Application shutting down...")
