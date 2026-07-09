@@ -126,6 +126,11 @@ async def user_self_signup(
     if (await session.execute(existing_stmt)).scalar_one_or_none():
         raise HTTPException(status_code=400, detail="User already exists")
 
+    # First user to register becomes admin; all subsequent users become regular users.
+    any_user_stmt = select(BusinessAdmin.id).where(BusinessAdmin.business_id == business.id).limit(1)
+    has_users = (await session.execute(any_user_stmt)).scalar_one_or_none() is not None
+    role = "user" if has_users else "admin"
+
     user = BusinessAdmin(
         id=uuid.uuid4(),
         business_id=business.id,
@@ -133,9 +138,15 @@ async def user_self_signup(
         email=normalized_email,
         email_normalized=normalized_email,
         password_hash=get_password_hash(request.password),
-        role="user",
+        role=role,
     )
     session.add(user)
+
+    # Link the first user (admin) as the business owner.
+    if role == "admin":
+        business.admin_id = user.id
+        session.add(business)
+
     await session.commit()
     return {
         "status": "created",

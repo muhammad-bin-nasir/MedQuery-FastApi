@@ -1,0 +1,63 @@
+INFO:     Started server process [1402633]
+INFO:     Waiting for application startup.
+2026-07-07 11:30:42 | INFO     | app.main | main.py:114 | lifespan() | Application starting up...
+2026-07-07 11:30:42 | INFO     | app.core.crash_logger | crash_logger.py:302 | write_progress() | Progress: app_started (memory: 115.73828125MB)
+2026-07-07 11:30:42 | INFO     | app.main | main.py:130 | lifespan() | Application startup complete
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:51178 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54000 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54004 - "GET /api/payments/my-plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42060 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:42060 - "GET /ui HTTP/1.1" 200 OK
+2026-07-07 11:39:14 | WARNING  | passlib.handlers.bcrypt | bcrypt.py:622 | _load_backend_mixin() | (trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "/home/muhammad/.local/lib/python3.14/site-packages/passlib/handlers/bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+2026-07-07 11:39:14 | DEBUG    | passlib.handlers.bcrypt | bcrypt.py:625 | _load_backend_mixin() | detected 'bcrypt' backend, version '<unknown>'
+2026-07-07 11:39:14 | DEBUG    | passlib.handlers.bcrypt | bcrypt.py:406 | _finalize_backend_mixin() | 'bcrypt' backend lacks $2$ support, enabling workaround
+INFO:     127.0.0.1:48146 - "POST /api/admin/auth/user-signup HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39732 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:39742 - "GET /app.js HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59652 - "GET / HTTP/1.1" 307 Temporary Redirect
+2026-07-09 11:43:00 | CRITICAL | app.main | main.py:88 | signal_handler() | Received signal 15, logging crash before exit...
+2026-07-09 11:43:00 | CRITICAL | app.core.crash_logger | crash_logger.py:209 | log_crash() | CRASH DETECTED: crash_20260709_064300_1402633
+Exception: SignalException: Application terminated by signal 15
+Memory: 17.7578125MB RSS
+Log file: logs/crashes/crash_20260709_064300_1402633.log
+ERROR:    Traceback (most recent call last):
+  File "/usr/lib64/python3.14/asyncio/runners.py", line 205, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.14/asyncio/base_events.py", line 706, in run_until_complete
+    self.run_forever()
+    ~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/asyncio/base_events.py", line 677, in run_forever
+    self._run_once()
+    ~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/asyncio/base_events.py", line 2018, in _run_once
+    event_list = self._selector.select(timeout)
+  File "/usr/lib64/python3.14/selectors.py", line 452, in select
+    fd_event_list = self._selector.poll(timeout, max_ev)
+  File "/home/muhammad/WinDrives/Office/Single/Fast-API-Single/app/main.py", line 103, in signal_handler
+    sys.exit(1)
+    ~~~~~~~~^^^
+SystemExit: 1
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/muhammad/.local/lib/python3.14/site-packages/starlette/routing.py", line 645, in lifespan
+    await receive()
+  File "/usr/lib/python3.14/site-packages/uvicorn/lifespan/on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/asyncio/queues.py", line 186, in get
+    await getter
+asyncio.exceptions.CancelledError
+

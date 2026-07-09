@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import SystemConfig
 
 OPENAI_API_KEY_KEY = "openai_api_key"
+ACTIVE_PLAN_KEY = "active_plan_code"
 
 
 def _looks_like_masked_or_placeholder_key(value: str | None) -> bool:
@@ -60,3 +61,25 @@ async def get_openai_api_key_status(session: AsyncSession) -> dict:
     if len(key) <= 11:
         return {"set": True, "masked_key": "(set)"}
     return {"set": True, "masked_key": f"{key[:7]}...{key[-4:]}"}
+
+
+async def get_active_plan_code(session: AsyncSession) -> str | None:
+    """Return the currently active plan code, or None if no plan has been purchased yet."""
+    stmt = select(SystemConfig).where(SystemConfig.key == ACTIVE_PLAN_KEY)
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if not row or not row.value.strip():
+        return None
+    return row.value.strip()
+
+
+async def set_active_plan_code(session: AsyncSession, plan_code: str) -> None:
+    """Set the currently active plan code. Creates or updates the row."""
+    stmt = select(SystemConfig).where(SystemConfig.key == ACTIVE_PLAN_KEY)
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row:
+        row.value = plan_code
+    else:
+        session.add(SystemConfig(key=ACTIVE_PLAN_KEY, value=plan_code))
+    await session.commit()

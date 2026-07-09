@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse
@@ -21,6 +22,7 @@ from app.api.routes import (
     documents_router,
     dbview_router,
     health_router,
+    payments_router,
     rag_router,
     system_config_router,
     ui_router,
@@ -143,6 +145,18 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8002",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8002",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", include_in_schema=False)
@@ -322,4 +336,5 @@ app.include_router(chat_router, prefix=settings.api_v1_prefix)
 app.include_router(system_config_router, prefix=settings.api_v1_prefix)
 app.include_router(dbview_router, prefix=settings.api_v1_prefix)
 app.include_router(health_router, prefix=settings.api_v1_prefix)
+app.include_router(payments_router, prefix=settings.api_v1_prefix)
 app.include_router(ui_router)

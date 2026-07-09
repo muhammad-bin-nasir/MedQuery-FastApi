@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     file_storage_path: str = "./storage"
     rag_background_ingest: bool = False
+    stripe_secret_key: str | None = None
 
 
 class EmbeddingModelInfo(BaseModel):
