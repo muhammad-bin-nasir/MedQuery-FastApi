@@ -15,5 +15,9 @@ python-multipart==0.0.9
 psutil==5.9.8
 pytest==8.3.3
 bcrypt==3.2.2
-# Local embeddings support (pulls PyTorch ~1–2GB, may cause long Docker builds)
-sentence-transformers>=2.2.0
+pymysql==1.1.0
+slowapi>=0.1.9
+stripe>=10.0.0
+# Optional local embeddings are intentionally excluded from the base image
+# to keep container builds fast. Install them only when needed via:
+#   pip install -r requirements-local-embeddings.txt

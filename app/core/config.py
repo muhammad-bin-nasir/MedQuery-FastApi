@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api"
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/medquery"
+    laravel_database_url: str | None = None
 
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
 
     file_storage_path: str = "./storage"
     rag_background_ingest: bool = False
+    stripe_secret_key: str | None = None
 
 
 class EmbeddingModelInfo(BaseModel):

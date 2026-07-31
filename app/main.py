@@ -7,7 +7,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.routes import (
     auth_router,
@@ -16,6 +22,7 @@ from app.api.routes import (
     documents_router,
     dbview_router,
     health_router,
+    payments_router,
     rag_router,
     system_config_router,
     ui_router,
@@ -24,7 +31,7 @@ from app.api.routes import (
 )
 from app.core.config import get_settings
 from app.core.crash_logger import crash_logger
-from app.core.seed import seed_initial_admin
+from app.core.limiter import limiter
 
 settings = get_settings()
 
@@ -35,6 +42,45 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+OPENAPI_TAGS = [
+    {
+        "name": "Admin Auth",
+        "description": "Authentication and account management endpoints for admin and user creation.",
+    },
+    {
+        "name": "Businesses",
+        "description": "Create, list, and inspect business tenants used by the RAG system.",
+    },
+    {
+        "name": "Workspaces",
+        "description": "Manage workspaces that belong to a business and group related documents and settings.",
+    },
+    {
+        "name": "Workspace Config",
+        "description": "Read and update retrieval, embedding, and chat model configuration for a workspace.",
+    },
+    {
+        "name": "Documents",
+        "description": "Upload, inspect, reindex, cancel, reset, and browse documents and chunks for a workspace.",
+    },
+    {
+        "name": "RAG Retrieval",
+        "description": "Retrieve the most relevant indexed chunks for a user query in a workspace.",
+    },
+    {
+        "name": "Chat",
+        "description": "Generate answers, stream responses, and manage chat history for users and admins.",
+    },
+    {
+        "name": "System Config",
+        "description": "Read and update global system values such as the OpenAI API key.",
+    },
+    {
+        "name": "Health",
+        "description": "Basic health and uptime validation endpoints.",
+    },
+]
 
 
 def signal_handler(signum, frame):
@@ -77,7 +123,10 @@ async def lifespan(_: FastAPI):
         crash_logger.write_progress("app_started", {"event": "startup"})
     except Exception as e:
         logger.warning(f"Could not init log dir: {e}")
-    await seed_initial_admin()
+
+    from app.core.seed import ensure_default_user_tenant
+    await ensure_default_user_tenant()
+
     logger.info("Application startup complete")
     yield
     logger.info("Application shutting down...")
@@ -85,10 +134,103 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
+    description=(
+        "MedQuery RAG API for business, workspace, document, retrieval, and chat management. "
+        "Use the grouped Swagger sections to explore admin setup, document ingestion, RAG retrieval, and chat generation flows."
+    ),
+    openapi_tags=OPENAPI_TAGS,
     openapi_url="/openapi.json",
-    docs_url="/docs",
+    docs_url=None,
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8002",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8002",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect() -> RedirectResponse:
+    """Redirect root URL to the UI page."""
+    return RedirectResponse(url="/ui", status_code=307)
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html() -> HTMLResponse:
+    """Serve Swagger UI and pre-fill Bearer auth from localStorage adminToken."""
+    response = get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_ui_parameters={"persistAuthorization": True},
+    )
+
+    html = response.body.decode("utf-8")
+    auto_auth_script = """
+<script>
+(function () {
+    function normalizeToken(raw) {
+        if (!raw || typeof raw !== "string") return "";
+        return raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim();
+    }
+
+    function tryAuthorize(attemptsLeft) {
+        if (!window.ui || typeof window.ui.preauthorizeApiKey !== "function") {
+            if (attemptsLeft > 0) {
+                setTimeout(function () { tryAuthorize(attemptsLeft - 1); }, 200);
+            }
+            return;
+        }
+
+        var token = normalizeToken(localStorage.getItem("adminToken"));
+        if (!token) {
+            console.warn("[Swagger Docs] No adminToken found in localStorage");
+            return;
+        }
+
+        console.log("[Swagger Docs] Attempting to authorize with token (length=" + token.length + ")");
+
+        // Try HTTPBearer (FastAPI default for HTTPBearer)
+        try {
+            window.ui.preauthorizeApiKey("HTTPBearer", token);
+            console.log("[Swagger Docs] Successfully authorized HTTPBearer scheme");
+        } catch (e) {
+            console.log("[Swagger Docs] preauthorizeApiKey failed: " + e.message);
+        }
+
+        // Also try authActions.authorize as fallback
+        try {
+            if (window.ui.authActions && typeof window.ui.authActions.authorize === "function") {
+                var auth = {
+                    "HTTPBearer": {
+                        name: "HTTPBearer",
+                        schema: { type: "http", scheme: "bearer" },
+                        value: token
+                    }
+                };
+                window.ui.authActions.authorize(auth);
+                console.log("[Swagger Docs] authActions.authorize succeeded");
+            }
+        } catch (e) {
+            console.log("[Swagger Docs] authActions.authorize failed: " + e.message);
+        }
+    }
+
+    tryAuthorize(50);
+})();
+</script>
+"""
+    html = html.replace("</body>", auto_auth_script + "\n</body>")
+    return HTMLResponse(content=html, status_code=response.status_code)
 
 
 @app.exception_handler(HTTPException)
@@ -161,6 +303,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"status": 429, "message": "Too many requests. Please try again later.", "details": {}},
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     validation_errors = exc.errors()
@@ -186,4 +336,5 @@ app.include_router(chat_router, prefix=settings.api_v1_prefix)
 app.include_router(system_config_router, prefix=settings.api_v1_prefix)
 app.include_router(dbview_router, prefix=settings.api_v1_prefix)
 app.include_router(health_router, prefix=settings.api_v1_prefix)
+app.include_router(payments_router, prefix=settings.api_v1_prefix)
 app.include_router(ui_router)
