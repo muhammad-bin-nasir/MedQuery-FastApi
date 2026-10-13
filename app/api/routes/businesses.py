@@ -3,11 +3,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
-from app.core.plans import PLANS
 from app.db.session import get_session
 from app.models import Business, BusinessAdmin
 from app.schemas.business import BusinessCreate, BusinessOut
-from app.services.system_config_service import get_active_plan_code
+from app.services.plan_service import get_active_plan_limits
 
 router = APIRouter(prefix="/admin/businesses", tags=["Businesses"])
 
@@ -34,8 +33,8 @@ async def create_business(
     """Create a new business tenant that can own workspaces, users, and documents."""
     _ensure_business_creator(admin)
 
-    plan_code = await get_active_plan_code(session)
-    max_businesses = PLANS[plan_code]["max_businesses"] if plan_code else 1
+    limits = await get_active_plan_limits(session)
+    max_businesses = limits["max_businesses"]
     existing_count = (
         await session.execute(select(func.count()).select_from(Business))
     ).scalar_one()
@@ -43,7 +42,7 @@ async def create_business(
         raise HTTPException(
             status_code=403,
             detail=(
-                f"Business limit reached for the '{plan_code or 'no'}' plan "
+                f"Business limit reached for your current plan "
                 f"(max {max_businesses}). Upgrade your plan to add more businesses."
             ),
         )

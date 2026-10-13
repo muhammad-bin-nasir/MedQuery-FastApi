@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
 from app.db.session import get_session
 from app.models import Business, BusinessAdmin, Workspace, WorkspaceConfig
 from app.schemas.workspace import WorkspaceCreate, WorkspaceOut
+from app.services.plan_service import get_active_plan_limits
 
 router = APIRouter(
     prefix="/admin/businesses/{business_client_id}/workspaces",
@@ -49,6 +50,20 @@ async def create_workspace(
     ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="Workspace already exists")
+
+    limits = await get_active_plan_limits(session)
+    max_workspaces = limits["max_workspaces"]
+    existing_count = (
+        await session.execute(select(func.count()).select_from(Workspace))
+    ).scalar_one()
+    if existing_count >= max_workspaces:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Workspace limit reached for your current plan "
+                f"(max {max_workspaces}). Upgrade your plan to add more workspaces."
+            ),
+        )
 
     workspace = Workspace(
         business_id=business.id,

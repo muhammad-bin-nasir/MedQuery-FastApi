@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
@@ -11,6 +11,25 @@ from app.db.session import get_session
 from app.models import Business, BusinessAdmin, Workspace
 from app.schemas.auth import CreateAdminRequest, LoginRequest, TokenResponse
 from app.schemas.auth import CreateUserRequest, UserSelfSignupRequest
+from app.services.plan_service import get_active_plan_limits
+
+
+async def _ensure_user_quota_available(session: AsyncSession) -> None:
+    limits = await get_active_plan_limits(session)
+    max_users = limits["max_users"]
+    existing_count = (
+        await session.execute(
+            select(func.count()).select_from(BusinessAdmin).where(BusinessAdmin.role == "user")
+        )
+    ).scalar_one()
+    if existing_count >= max_users:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"User limit reached for your current plan "
+                f"(max {max_users}). Upgrade your plan to add more users."
+            ),
+        )
 
 router = APIRouter(prefix="/admin/auth", tags=["Admin Auth"])
 
@@ -131,6 +150,9 @@ async def user_self_signup(
     has_users = (await session.execute(any_user_stmt)).scalar_one_or_none() is not None
     role = "user" if has_users else "admin"
 
+    if role == "user":
+        await _ensure_user_quota_available(session)
+
     user = BusinessAdmin(
         id=uuid.uuid4(),
         business_id=business.id,
@@ -193,6 +215,8 @@ async def create_user(
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="User already exists")
+
+    await _ensure_user_quota_available(session)
 
     user = BusinessAdmin(
         id=uuid.uuid4(),

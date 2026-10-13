@@ -9,6 +9,7 @@ from app.models.chat_request import ChatRequest
 from app.models.chat_response import ChatResponse
 from app.models.chat_header import ChatHeader
 from app.models.system_config import SystemConfig
+from app.models.plan import Plan
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "ChatResponse",
     "ChatHeader",
     "SystemConfig",
+    "Plan",
 ]

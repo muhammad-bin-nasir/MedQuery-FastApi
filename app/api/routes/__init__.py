@@ -10,6 +10,7 @@ from app.api.routes.dbview import router as dbview_router
 from app.api.routes.system_config_routes import router as system_config_router
 from app.api.routes.ui import router as ui_router
 from app.api.routes.payments import router as payments_router
+from app.api.routes.plans import router as plans_router
 
 __all__ = [
     "auth_router",
@@ -24,4 +25,5 @@ __all__ = [
     "system_config_router",
     "ui_router",
     "payments_router",
+    "plans_router",
 ]

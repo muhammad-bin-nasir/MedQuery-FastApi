@@ -23,6 +23,7 @@ from app.api.routes import (
     dbview_router,
     health_router,
     payments_router,
+    plans_router,
     rag_router,
     system_config_router,
     ui_router,
@@ -150,8 +151,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:8002",
+        "http://localhost:8003",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8002",
+        "http://127.0.0.1:8003",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -337,4 +340,5 @@ app.include_router(system_config_router, prefix=settings.api_v1_prefix)
 app.include_router(dbview_router, prefix=settings.api_v1_prefix)
 app.include_router(health_router, prefix=settings.api_v1_prefix)
 app.include_router(payments_router, prefix=settings.api_v1_prefix)
+app.include_router(plans_router, prefix=settings.api_v1_prefix)
 app.include_router(ui_router)

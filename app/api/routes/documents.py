@@ -12,6 +12,7 @@ from app.core.crash_logger import crash_logger
 from app.db.session import AsyncSessionLocal, get_session
 from app.models import Business, BusinessAdmin, Document, DocumentChunk, Workspace, WorkspaceConfig
 from app.schemas.document import DocumentChunkOut, DocumentOut, DocumentStatusResponse, DocumentUploadResponse
+from app.services.plan_service import get_active_plan_limits
 from app.services.rag_ingest_service import RagIngestService
 
 logger = logging.getLogger(__name__)
@@ -320,7 +321,21 @@ async def upload_document(
     try:
         business, workspace = await _get_workspace(session, business_client_id, workspace_id)
         _ensure_access(admin, business)
-        
+
+        limits = await get_active_plan_limits(session)
+        max_rag_documents = limits["max_rag_documents"]
+        existing_document_count = (
+            await session.execute(select(func.count()).select_from(Document))
+        ).scalar_one()
+        if existing_document_count >= max_rag_documents:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Document upload limit reached for your current plan "
+                    f"(max {max_rag_documents}). Upgrade your plan to upload more documents."
+                ),
+            )
+
         if not file.filename:
             raise HTTPException(status_code=400, detail="Filename is required")
 

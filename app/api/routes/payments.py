@@ -5,10 +5,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.plans import PLANS
 from app.db.session import get_session
-from app.models import Business
+from app.models import Business, Plan
 from app.schemas.plan import PlanStatusOut
+from app.services.plan_service import get_active_plan_limits
 from app.services.system_config_service import get_active_plan_code, set_active_plan_code
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -23,22 +23,31 @@ class ConfirmPlanRequest(BaseModel):
     payment_intent_id: str
 
 
+async def _get_plan_or_404(session: AsyncSession, code: str) -> Plan:
+    plan = (await session.execute(select(Plan).where(Plan.code == code))).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {code}")
+    return plan
+
+
 @router.post("/create-intent")
-async def create_payment_intent(body: CreateIntentRequest):
+async def create_payment_intent(
+    body: CreateIntentRequest,
+    session: AsyncSession = Depends(get_session),
+):
     settings = get_settings()
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=500, detail="Stripe is not configured on this server")
 
-    plan = PLANS.get(body.plan)
-    if plan is None:
-        raise HTTPException(status_code=400, detail=f"Unknown plan: {body.plan}")
+    plan = await _get_plan_or_404(session, body.plan)
 
     stripe.api_key = settings.stripe_secret_key
 
     try:
         intent = stripe.PaymentIntent.create(
-            amount=plan["amount_cents"],
+            amount=plan.price_cents,
             currency="usd",
+            payment_method_types=["card"],
             metadata={"plan": body.plan},
         )
         return {"client_secret": intent.client_secret, "payment_intent_id": intent.id}
@@ -55,9 +64,7 @@ async def confirm_plan(
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=500, detail="Stripe is not configured on this server")
 
-    plan = PLANS.get(body.plan)
-    if plan is None:
-        raise HTTPException(status_code=400, detail=f"Unknown plan: {body.plan}")
+    plan = await _get_plan_or_404(session, body.plan)
 
     stripe.api_key = settings.stripe_secret_key
 
@@ -77,7 +84,7 @@ async def confirm_plan(
     return {
         "status": "ok",
         "plan": body.plan,
-        "max_businesses": plan["max_businesses"],
+        "max_businesses": plan.max_businesses,
         "message": f"Plan '{body.plan}' activated",
     }
 
@@ -85,7 +92,7 @@ async def confirm_plan(
 @router.get("/my-plan", response_model=PlanStatusOut)
 async def get_my_plan(session: AsyncSession = Depends(get_session)) -> PlanStatusOut:
     plan_code = await get_active_plan_code(session)
-    max_businesses = PLANS[plan_code]["max_businesses"] if plan_code else 1
+    limits = await get_active_plan_limits(session)
 
     businesses_used = (
         await session.execute(select(func.count()).select_from(Business))
@@ -93,6 +100,6 @@ async def get_my_plan(session: AsyncSession = Depends(get_session)) -> PlanStatu
 
     return PlanStatusOut(
         plan_code=plan_code,
-        max_businesses=max_businesses,
+        max_businesses=limits["max_businesses"],
         businesses_used=businesses_used,
     )
